@@ -73,12 +73,12 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
 .form-group textarea { resize: vertical; min-height: 80px; }
 
 /* INGREDIENT ROWS */
-.ingr-row { display: flex; gap: 6px; margin-bottom: 6px; align-items: center; }
-.ingr-row input { padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; }
-.ingr-row input:first-child { flex: 2; }
-.ingr-row input:nth-child(2) { flex: 1; min-width: 60px; }
-.ingr-row select { flex: 1; padding: 8px 4px; border: 1px solid var(--border); border-radius: 6px; font-size: 12px; min-width: 80px; }
-.ingr-row button { background: none; border: none; color: var(--red); font-size: 20px; padding: 4px; flex-shrink: 0; }
+.ingr-row { display: flex; gap: 4px; margin-bottom: 6px; align-items: center; max-width: 100%; }
+.ingr-row input { min-width: 0; padding: 8px 6px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; }
+.ingr-row input:first-child { flex: 2 1 0; }
+.ingr-row input:nth-child(2) { flex: 1 1 0; }
+.ingr-row select { flex: 0 0 auto; width: 70px; padding: 8px 2px; border: 1px solid var(--border); border-radius: 6px; font-size: 11px; }
+.ingr-row button { background: none; border: none; color: var(--red); font-size: 20px; padding: 2px; flex-shrink: 0; }
 
 /* MEAL PLAN */
 .day-card { background: var(--surface); border-radius: var(--radius); border: 1px solid var(--border); margin-bottom: 8px; box-shadow: var(--shadow); display: flex; align-items: center; }
@@ -102,11 +102,11 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
 .item-qty { font-size: 13px; color: var(--text-secondary); flex-shrink: 0; }
 
 /* STAPLES */
-.staple-row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
-.staple-row input { flex: 2; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; }
-.staple-row input:nth-child(2) { flex: 1; }
-.staple-row select { flex: 1; padding: 8px 4px; border: 1px solid var(--border); border-radius: 6px; font-size: 12px; }
-.staple-row button { background: none; border: none; color: var(--red); font-size: 20px; padding: 4px; }
+.staple-row { display: flex; gap: 4px; align-items: center; margin-bottom: 6px; max-width: 100%; }
+.staple-row input { flex: 1 1 0; min-width: 0; padding: 8px 6px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; }
+.staple-row input:first-child { flex: 2 1 0; }
+.staple-row select { flex: 0 0 auto; width: 70px; padding: 8px 2px; border: 1px solid var(--border); border-radius: 6px; font-size: 11px; }
+.staple-row button { background: none; border: none; color: var(--red); font-size: 20px; padding: 2px; flex-shrink: 0; }
 
 /* SEARCH */
 .search-bar { position: relative; margin-bottom: 16px; }
