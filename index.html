@@ -343,6 +343,12 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
       <h3 style="margin-bottom:8px;">Google Calendar</h3>
       <p style="font-size:13px; color:var(--text-secondary); margin-bottom:10px;">Connect your Google Calendar to see upcoming events on the home screen.</p>
       <div id="calendarStatus"></div>
+      <div id="calendarPicker" style="display:none;">
+        <div class="form-group" style="margin-bottom:10px;">
+          <label>Which calendar?</label>
+          <select id="calendarSelect" onchange="selectCalendar(this.value)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:var(--radius);"></select>
+        </div>
+      </div>
       <button class="btn btn-secondary btn-block" id="calConnectBtn" onclick="connectGoogleCalendar()">Connect Calendar</button>
     </div>
 
@@ -676,6 +682,8 @@ const GCAL_CLIENT_ID = '91303889241-23dfcrg1g0tc7f1p1bgc9p8p9htq40cd.apps.google
 const GCAL_SCOPES = 'https://www.googleapis.com/auth/calendar.readonly';
 let gcalToken = null;
 let gcalEvents = [];
+let gcalCalendars = [];
+let gcalSelectedId = localStorage.getItem('gcal_selected_id') || 'primary';
 let gcalTokenClient = null;
 let gapiInited = false;
 let gisInited = false;
@@ -685,7 +693,6 @@ function initGapi() {
     await gapi.client.init({});
     await gapi.client.load('https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest');
     gapiInited = true;
-    // If we have a stored token, try using it
     const stored = localStorage.getItem('gcal_token');
     if (stored) {
       try {
@@ -693,6 +700,7 @@ function initGapi() {
         if (parsed.expires_at && parsed.expires_at > Date.now()) {
           gcalToken = parsed.access_token;
           gapi.client.setToken({ access_token: gcalToken });
+          fetchCalendarList();
           fetchCalendarEvents();
         } else { localStorage.removeItem('gcal_token'); }
       } catch(e) { localStorage.removeItem('gcal_token'); }
@@ -708,9 +716,9 @@ function initGis() {
     callback: (response) => {
       if (response.error) { console.log('GCal auth error:', response); return; }
       gcalToken = response.access_token;
-      // Store with expiry
       const expiresAt = Date.now() + (response.expires_in * 1000);
       localStorage.setItem('gcal_token', JSON.stringify({ access_token: gcalToken, expires_at: expiresAt }));
+      fetchCalendarList();
       fetchCalendarEvents();
       updateCalendarSettingsUI();
       toast('Calendar connected!');
@@ -719,17 +727,15 @@ function initGis() {
   gisInited = true;
 }
 
-// Called when scripts load — check if both are ready
 function maybeInitGcal() {
   if (typeof gapi !== 'undefined' && !gapiInited) initGapi();
   if (typeof google !== 'undefined' && google.accounts && !gisInited) initGis();
 }
-// Poll briefly for script load
 let gcalInitTimer = setInterval(() => {
   maybeInitGcal();
   if (gapiInited && gisInited) clearInterval(gcalInitTimer);
 }, 500);
-setTimeout(() => clearInterval(gcalInitTimer), 15000); // give up after 15s
+setTimeout(() => clearInterval(gcalInitTimer), 15000);
 
 function connectGoogleCalendar() {
   if (!gisInited) { toast('Google services still loading, try again in a moment'); return; }
@@ -742,11 +748,53 @@ function disconnectGoogleCalendar() {
   }
   gcalToken = null;
   gcalEvents = [];
+  gcalCalendars = [];
   localStorage.removeItem('gcal_token');
+  localStorage.removeItem('gcal_selected_id');
+  gcalSelectedId = 'primary';
   gapi.client.setToken(null);
   updateCalendarSettingsUI();
   renderCalendarSummary();
   toast('Calendar disconnected');
+}
+
+async function fetchCalendarList() {
+  if (!gcalToken || !gapiInited) return;
+  try {
+    const response = await gapi.client.calendar.calendarList.list({ showHidden: false });
+    gcalCalendars = (response.result.items || []).map(cal => ({
+      id: cal.id,
+      name: cal.summary || cal.id,
+      primary: cal.primary || false,
+      color: cal.backgroundColor || '#4285f4'
+    }));
+    // If previously selected calendar isn't in the list, reset to primary
+    if (gcalSelectedId !== 'primary' && !gcalCalendars.find(c=>c.id===gcalSelectedId)) {
+      gcalSelectedId = 'primary';
+      localStorage.setItem('gcal_selected_id', gcalSelectedId);
+    }
+    renderCalendarPicker();
+  } catch(e) { console.log('GCal list error:', e); }
+}
+
+function renderCalendarPicker() {
+  const pickerEl = document.getElementById('calendarPicker');
+  const selectEl = document.getElementById('calendarSelect');
+  if (!pickerEl || !selectEl) return;
+  if (!gcalToken || !gcalCalendars.length) { pickerEl.style.display = 'none'; return; }
+  pickerEl.style.display = 'block';
+  selectEl.innerHTML = gcalCalendars.map(cal => {
+    const label = cal.primary ? cal.name + ' (primary)' : cal.name;
+    const selected = cal.id === gcalSelectedId || (gcalSelectedId === 'primary' && cal.primary);
+    return `<option value="${esc(cal.id)}" ${selected?'selected':''}>${esc(label)}</option>`;
+  }).join('');
+}
+
+function selectCalendar(calId) {
+  gcalSelectedId = calId;
+  localStorage.setItem('gcal_selected_id', calId);
+  fetchCalendarEvents();
+  toast('Calendar updated');
 }
 
 async function fetchCalendarEvents() {
@@ -756,7 +804,7 @@ async function fetchCalendarEvents() {
     const weekEnd = new Date(now);
     weekEnd.setDate(weekEnd.getDate() + 7);
     const response = await gapi.client.calendar.events.list({
-      calendarId: 'primary',
+      calendarId: gcalSelectedId,
       timeMin: now.toISOString(),
       timeMax: weekEnd.toISOString(),
       singleEvents: true,
@@ -773,7 +821,6 @@ async function fetchCalendarEvents() {
     renderCalendarSummary();
   } catch(e) {
     console.log('GCal fetch error:', e);
-    // Token might be expired
     if (e.status === 401) {
       localStorage.removeItem('gcal_token');
       gcalToken = null;
@@ -785,17 +832,22 @@ async function fetchCalendarEvents() {
 function updateCalendarSettingsUI() {
   const statusEl = document.getElementById('calendarStatus');
   const btnEl = document.getElementById('calConnectBtn');
+  const pickerEl = document.getElementById('calendarPicker');
   if (!statusEl || !btnEl) return;
   if (gcalToken) {
-    statusEl.innerHTML = '<p style="font-size:13px;color:var(--green);font-weight:600;margin-bottom:8px;">Connected</p>';
+    const calName = gcalCalendars.find(c=>c.id===gcalSelectedId);
+    statusEl.innerHTML = `<p style="font-size:13px;color:var(--green);font-weight:600;margin-bottom:8px;">Connected${calName?' — '+esc(calName.name):''}</p>`;
     btnEl.textContent = 'Disconnect Calendar';
     btnEl.onclick = disconnectGoogleCalendar;
     btnEl.className = 'btn btn-danger btn-block';
+    if (pickerEl) pickerEl.style.display = gcalCalendars.length ? 'block' : 'none';
+    renderCalendarPicker();
   } else {
     statusEl.innerHTML = '';
     btnEl.textContent = 'Connect Calendar';
     btnEl.onclick = connectGoogleCalendar;
     btnEl.className = 'btn btn-secondary btn-block';
+    if (pickerEl) pickerEl.style.display = 'none';
   }
 }
 
