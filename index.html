@@ -801,15 +801,24 @@ async function fetchCalendarEvents() {
   if (!gcalToken || !gapiInited) return;
   try {
     const now = new Date();
-    const weekEnd = new Date(now);
-    weekEnd.setDate(weekEnd.getDate() + 7);
+    now.setHours(0,0,0,0);
+    // Find end of next week (next Sunday 23:59)
+    const today = new Date(now);
+    const dayOfWeek = today.getDay(); // 0=Sun
+    // This Sunday = today + (7 - dayOfWeek) if not Sunday, else today
+    const thisSunday = new Date(today);
+    thisSunday.setDate(today.getDate() + (dayOfWeek === 0 ? 0 : 7 - dayOfWeek));
+    // Next Sunday = thisSunday + 7
+    const nextSunday = new Date(thisSunday);
+    nextSunday.setDate(thisSunday.getDate() + 7);
+    nextSunday.setHours(23,59,59,999);
     const response = await gapi.client.calendar.events.list({
       calendarId: gcalSelectedId,
       timeMin: now.toISOString(),
-      timeMax: weekEnd.toISOString(),
+      timeMax: nextSunday.toISOString(),
       singleEvents: true,
       orderBy: 'startTime',
-      maxResults: 30
+      maxResults: 50
     });
     gcalEvents = (response.result.items || []).map(ev => ({
       title: ev.summary || '(No title)',
@@ -860,53 +869,144 @@ function renderCalendarSummary() {
     return;
   }
 
-  if (!gcalEvents.length) {
-    el.innerHTML = `<div class="card" style="border-left:4px solid var(--blue);"><div style="font-size:12px;font-weight:600;color:var(--blue);text-transform:uppercase;margin-bottom:4px;">📅 This Week</div><div style="font-size:14px;color:var(--text-secondary);padding:8px 0;">No upcoming events</div></div>`;
-    return;
-  }
-
   const today = new Date(); today.setHours(0,0,0,0);
   const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate()+1);
+  const dayOfWeek = today.getDay(); // 0=Sun
+  // This Sunday end-of-day
+  const thisSunday = new Date(today);
+  thisSunday.setDate(today.getDate() + (dayOfWeek === 0 ? 0 : 7 - dayOfWeek));
+  thisSunday.setHours(23,59,59,999);
+  // Next Monday
+  const nextMonday = new Date(thisSunday);
+  nextMonday.setDate(thisSunday.getDate() + 1);
+  nextMonday.setHours(0,0,0,0);
+  // Next Sunday
+  const nextSunday = new Date(nextMonday);
+  nextSunday.setDate(nextMonday.getDate() + 6);
+  nextSunday.setHours(23,59,59,999);
 
-  // Group events by day
-  const dayGroups = {};
+  // Split events into this week and next week
+  const thisWeekEvents = [];
+  const nextWeekEvents = [];
   gcalEvents.forEach(ev => {
     const evDate = new Date(ev.start);
     evDate.setHours(0,0,0,0);
-    const key = evDate.toISOString().split('T')[0];
-    if (!dayGroups[key]) dayGroups[key] = [];
-    dayGroups[key].push(ev);
+    if (evDate <= thisSunday) thisWeekEvents.push(ev);
+    else if (evDate >= nextMonday && evDate <= nextSunday) nextWeekEvents.push(ev);
   });
 
-  let html = `<div class="card" style="border-left:4px solid var(--blue);">`;
-  html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><div style="font-size:12px;font-weight:600;color:var(--blue);text-transform:uppercase;">📅 This Week</div><button class="btn btn-sm btn-secondary" onclick="fetchCalendarEvents()" style="font-size:11px;padding:2px 8px;">Refresh</button></div>`;
-
-  const sortedDays = Object.keys(dayGroups).sort();
-  sortedDays.forEach(dayKey => {
-    const events = dayGroups[dayKey];
-    const d = new Date(dayKey+'T12:00:00');
-    const isToday = d.getTime() === today.getTime();
-    const isTomorrow = d.getTime() === tomorrow.getTime();
-    const dayLabel = isToday ? 'Today' : isTomorrow ? 'Tomorrow' : d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
-
-    events.forEach((ev, i) => {
-      html += `<div class="cal-event">`;
-      html += `<div class="cal-day-label${isToday?' cal-today':''}">${i===0?esc(dayLabel):''}</div>`;
-      html += `<div>`;
-      html += `<div class="cal-event-title">${esc(ev.title)}</div>`;
-      if (ev.allDay) {
-        html += `<div class="cal-event-time">All day</div>`;
-      } else {
-        const startTime = new Date(ev.start).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
-        const endTime = new Date(ev.end).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
-        html += `<div class="cal-event-time">${startTime} – ${endTime}</div>`;
-      }
-      if (ev.location) html += `<div class="cal-event-time">${esc(ev.location)}</div>`;
-      html += `</div></div>`;
+  // Group events by day helper
+  function groupByDay(events) {
+    const groups = {};
+    events.forEach(ev => {
+      const d = new Date(ev.start); d.setHours(0,0,0,0);
+      const key = d.toISOString().split('T')[0];
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(ev);
     });
-  });
+    return groups;
+  }
 
+  // Render event list helper
+  function renderEventList(dayGroups) {
+    let h = '';
+    const sortedDays = Object.keys(dayGroups).sort();
+    sortedDays.forEach(dayKey => {
+      const events = dayGroups[dayKey];
+      const d = new Date(dayKey+'T12:00:00');
+      const isToday = d.getTime() === today.getTime();
+      const isTomorrow = d.getTime() === tomorrow.getTime();
+      const dayLabel = isToday ? 'Today' : isTomorrow ? 'Tomorrow' : d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
+      events.forEach((ev, i) => {
+        h += `<div class="cal-event">`;
+        h += `<div class="cal-day-label${isToday?' cal-today':''}">${i===0?esc(dayLabel):''}</div>`;
+        h += `<div>`;
+        h += `<div class="cal-event-title">${esc(ev.title)}</div>`;
+        if (ev.allDay) {
+          h += `<div class="cal-event-time">All day</div>`;
+        } else {
+          const st = new Date(ev.start).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+          const et = new Date(ev.end).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+          h += `<div class="cal-event-time">${st} – ${et}</div>`;
+        }
+        if (ev.location) h += `<div class="cal-event-time">${esc(ev.location)}</div>`;
+        h += `</div></div>`;
+      });
+    });
+    return h;
+  }
+
+  // Generate week summary paragraph
+  function weekSummary(events, isNextWeek) {
+    const count = events.length;
+    const dayCount = new Set(events.map(ev => { const d = new Date(ev.start); d.setHours(0,0,0,0); return d.toISOString().split('T')[0]; })).size;
+    const titles = events.slice(0, 4).map(e => e.title);
+    if (count === 0 && !isNextWeek) return `<p style="font-size:13px;color:var(--text-secondary);margin-bottom:10px;line-height:1.5;">Looks like a calm stretch ahead — no events on the calendar. A great chance to slow down, be present with the kids, and enjoy some unstructured family time.</p>`;
+    if (count === 0 && isNextWeek) return `<p style="font-size:13px;color:var(--text-secondary);margin-bottom:10px;line-height:1.5;">Next week is wide open! Use the breathing room to plan something fun together — a family movie night, a new recipe, or just some extra time outdoors.</p>`;
+    let summary = '';
+    if (!isNextWeek) {
+      if (count <= 3) summary = `You've got ${count} event${count>1?'s':''} across ${dayCount} day${dayCount>1?'s':''} this week — a manageable pace. `;
+      else if (count <= 6) summary = `A solid week ahead with ${count} events across ${dayCount} day${dayCount>1?'s':''}. `;
+      else summary = `It's a busy one — ${count} events across ${dayCount} day${dayCount>1?'s':''}. `;
+      summary += `Coming up: ${titles.join(', ')}${count > 4 ? ', and more' : ''}.`;
+    } else {
+      const inspirations = [
+        "Every week is a fresh start — make it count!",
+        "Small moments together add up to big memories.",
+        "You've got this — take it one day at a time.",
+        "New week, new chances to be the family you want to be.",
+        "Remember: progress over perfection, every single week."
+      ];
+      const inspIdx = Math.floor(new Date().getTime() / (1000*60*60*24*7)) % inspirations.length;
+      if (count <= 3) summary = `Looking ahead, next week is lighter with ${count} event${count>1?'s':''} over ${dayCount} day${dayCount>1?'s':''}. `;
+      else if (count <= 6) summary = `Next week has ${count} events across ${dayCount} day${dayCount>1?'s':''} — a good rhythm. `;
+      else summary = `Next week is packed with ${count} events across ${dayCount} day${dayCount>1?'s':''} — plan ahead where you can. `;
+      summary += `On deck: ${titles.join(', ')}${count > 4 ? ', and more' : ''}. ${inspirations[inspIdx]}`;
+    }
+    return `<p style="font-size:13px;color:var(--text-secondary);margin-bottom:10px;line-height:1.5;">${esc(summary)}</p>`;
+  }
+
+  // Parenting tip of the week (rotates weekly)
+  const parentingTips = [
+    "Try a \"10-minute check-in\" this week — sit with each kid one-on-one, no screens, and just ask about their favorite part of the day.",
+    "Model the behavior you want to see. Kids mirror what we do far more than what we say — patience, kindness, and deep breaths go a long way.",
+    "Catch them being good! Specific praise like \"I noticed you shared with your brother\" builds more confidence than a generic \"good job.\"",
+    "Let them struggle a little before jumping in. Working through small frustrations builds resilience and problem-solving skills.",
+    "This week, try saying \"yes\" to one thing you'd normally say no to. A little spontaneity keeps the magic alive.",
+    "Create a family gratitude moment — at dinner, each person shares one thing they're thankful for today.",
+    "Remember: connection before correction. When a kid is upset, a hug often works better than a lecture.",
+    "Give choices instead of commands. \"Do you want to clean up before or after your snack?\" empowers kids and reduces power struggles.",
+    "Put your phone down during transitions — drop-off, pickup, bedtime. Those in-between moments matter more than we think.",
+    "Bored kids are creative kids. Don't rush to fill every quiet moment — let their imaginations take the lead this week."
+  ];
+  const tipIdx = Math.floor(new Date().getTime() / (1000*60*60*24*7)) % parentingTips.length;
+
+  let html = '';
+
+  // THIS WEEK
+  html += `<div class="card" style="border-left:4px solid var(--blue);">`;
+  html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><div style="font-size:12px;font-weight:600;color:var(--blue);text-transform:uppercase;">📅 This Week</div><button class="btn btn-sm btn-secondary" onclick="fetchCalendarEvents()" style="font-size:11px;padding:2px 8px;">Refresh</button></div>`;
+  html += weekSummary(thisWeekEvents, false);
+  if (thisWeekEvents.length) {
+    html += renderEventList(groupByDay(thisWeekEvents));
+  }
   html += `</div>`;
+
+  // NEXT WEEK
+  html += `<div class="card" style="border-left:4px solid var(--purple);margin-top:12px;">`;
+  html += `<div style="font-size:12px;font-weight:600;color:var(--purple);text-transform:uppercase;margin-bottom:8px;">🗓️ Next Week</div>`;
+  html += weekSummary(nextWeekEvents, true);
+  if (nextWeekEvents.length) {
+    html += renderEventList(groupByDay(nextWeekEvents));
+  }
+  html += `</div>`;
+
+  // PARENTING TIP
+  html += `<div class="card" style="border-left:4px solid var(--green);margin-top:12px;">`;
+  html += `<div style="font-size:12px;font-weight:600;color:var(--green);text-transform:uppercase;margin-bottom:8px;">💡 Parenting Tip of the Week</div>`;
+  html += `<p style="font-size:13px;color:var(--text);line-height:1.5;">${esc(parentingTips[tipIdx])}</p>`;
+  html += `</div>`;
+
   el.innerHTML = html;
 }
 
