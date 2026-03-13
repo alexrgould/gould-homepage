@@ -81,11 +81,12 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
 .ingr-row button { background: none; border: none; color: var(--red); font-size: 20px; padding: 2px; flex-shrink: 0; }
 
 /* MEAL PLAN */
-.day-card { background: var(--surface); border-radius: var(--radius); border: 1px solid var(--border); margin-bottom: 8px; box-shadow: var(--shadow); display: flex; align-items: center; }
-.day-header { padding: 12px 14px; font-weight: 700; font-size: 14px; background: var(--surface-hover); border-right: 1px solid var(--border); min-width: 90px; text-align: center; }
+.day-card { background: var(--surface); border-radius: var(--radius); border: 1px solid var(--border); margin-bottom: 8px; box-shadow: var(--shadow); display: flex; align-items: stretch; }
+.day-header { padding: 12px 14px; font-weight: 700; font-size: 14px; background: var(--surface-hover); border-right: 1px solid var(--border); min-width: 70px; text-align: center; display: flex; flex-direction: column; justify-content: center; }
 .day-header .date { font-weight: 400; font-size: 11px; color: var(--text-secondary); display: block; margin-top: 1px; }
-.day-meal { flex: 1; padding: 8px 12px; }
-.day-meal select { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; background: var(--surface); }
+.day-meal { flex: 1; padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; }
+.day-meal select { width: 100%; padding: 7px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; background: var(--surface); }
+.day-meal select.cuisine-select { font-size: 12px; color: var(--accent); font-weight: 600; }
 
 /* WEEK NAV */
 .week-nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
@@ -240,6 +241,7 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
       <input type="text" placeholder="Search recipes..." id="recipeSearch" oninput="renderRecipes()">
     </div>
     <div id="recipeList"></div>
+    <div id="recipeDiscover"></div>
   </div>
 
   <!-- PLAN -->
@@ -307,6 +309,16 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
     </div>
 
     <div class="card" style="margin-bottom:16px;">
+      <h3 style="margin-bottom:8px;">Cuisine Types</h3>
+      <p style="font-size:13px; color:var(--text-secondary); margin-bottom:10px;">Manage cuisine categories for organizing recipes.</p>
+      <div id="cuisinesList"></div>
+      <div style="display:flex; gap:6px; margin-top:8px;">
+        <input type="text" id="newCuisineInput" placeholder="New cuisine name" style="flex:1; padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-size:14px;">
+        <button class="btn btn-secondary btn-sm" onclick="addCuisine()">+ Add</button>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
       <h3 style="margin-bottom:8px;">Get Started</h3>
       <button class="btn btn-secondary btn-block" onclick="loadSampleData()">Load Sample Recipes</button>
     </div>
@@ -329,6 +341,7 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
     </div>
     <input type="hidden" id="recipeEditId">
     <div class="form-group"><label>Recipe Name</label><input type="text" id="recipeName" placeholder="e.g., Chicken Stir Fry"></div>
+    <div class="form-group"><label>Cuisine</label><select id="recipeCuisine"><option value="">Select a cuisine...</option></select></div>
     <div class="form-group"><label>Source URL (optional)</label><input type="url" id="recipeUrl" placeholder="https://..."></div>
     <div class="form-group"><label>Ingredients</label><div id="ingredientRows"></div><button class="btn btn-secondary btn-sm" onclick="addIngredientRow()" style="margin-top:6px;">+ Ingredient</button></div>
     <div class="form-group"><label>Notes</label><textarea id="recipeNotes" placeholder="Cooking instructions, tips, etc."></textarea></div>
@@ -408,7 +421,9 @@ function initFirebase() {
 // DATA
 // ===========================================================================
 const CATEGORIES = ['Produce','Meat & Seafood','Dairy','Bakery','Pantry','Frozen','Beverages','Other'];
-let data = { recipes: [], mealPlan: {}, staples: [], checkedItems: {}, children: [] };
+const DEFAULT_CUISINES = ['American','Mexican','Italian','Asian','Mediterranean','Indian','Southern','Comfort Food','Salads & Light','Other'];
+function getCuisines() { return (data.cuisines && data.cuisines.length) ? data.cuisines : DEFAULT_CUISINES; }
+let data = { recipes: [], mealPlan: {}, staples: [], checkedItems: {}, children: [], cuisines: [...DEFAULT_CUISINES], usageHistory: [] };
 let familyCode = null;
 let currentWeekStart = getMonday(new Date());
 let currentDetailId = null;
@@ -446,6 +461,8 @@ async function saveToFirebase() {
       staples: data.staples,
       children: data.children,
       checkedItems: data.checkedItems || {},
+      cuisines: data.cuisines || [...DEFAULT_CUISINES],
+      usageHistory: data.usageHistory || [],
       updatedAt: firebase.firestore.FieldValue.serverTimestamp()
     });
   } catch(e) { console.log('Save failed:', e); }
@@ -459,14 +476,16 @@ function startListening() {
     if (!doc.exists) return;
     const remote = doc.data();
     // Only update if data actually changed (avoid echo from our own save)
-    const remoteStr = JSON.stringify({ r: remote.recipes, m: remote.mealPlan, s: remote.staples, c: remote.children, ci: remote.checkedItems });
-    const localStr = JSON.stringify({ r: data.recipes, m: data.mealPlan, s: data.staples, c: data.children, ci: data.checkedItems });
+    const remoteStr = JSON.stringify({ r: remote.recipes, m: remote.mealPlan, s: remote.staples, c: remote.children, ci: remote.checkedItems, cu: remote.cuisines, uh: remote.usageHistory });
+    const localStr = JSON.stringify({ r: data.recipes, m: data.mealPlan, s: data.staples, c: data.children, ci: data.checkedItems, cu: data.cuisines, uh: data.usageHistory });
     if (remoteStr !== localStr) {
       data.recipes = remote.recipes || [];
       data.mealPlan = remote.mealPlan || {};
       data.staples = remote.staples || [];
       data.children = remote.children || [];
       data.checkedItems = remote.checkedItems || {};
+      data.cuisines = remote.cuisines || [...DEFAULT_CUISINES];
+      data.usageHistory = remote.usageHistory || [];
       persistLocal();
       refreshCurrentView();
     }
@@ -495,7 +514,7 @@ function showApp() {
 
 async function createFamily() {
   familyCode = document.getElementById('newFamilyCode').textContent;
-  data = { recipes: [], mealPlan: {}, staples: [], checkedItems: {}, children: [] };
+  data = { recipes: [], mealPlan: {}, staples: [], checkedItems: {}, children: [], cuisines: [...DEFAULT_CUISINES], usageHistory: [] };
   persistLocal();
   if (firebaseReady) {
     await saveToFirebase();
@@ -521,6 +540,8 @@ async function joinFamily() {
         data.staples = remote.staples || [];
         data.children = remote.children || [];
         data.checkedItems = remote.checkedItems || {};
+        data.cuisines = remote.cuisines || [...DEFAULT_CUISINES];
+        data.usageHistory = remote.usageHistory || [];
         persistLocal();
       }
     } catch(e) { console.log('Join fetch failed:', e); }
@@ -534,7 +555,7 @@ function leaveFamily() {
   if (!confirm('Disconnect from this family? Your data will stay on the server for your partner.')) return;
   if (unsubscribe) unsubscribe();
   familyCode = null;
-  data = { recipes: [], mealPlan: {}, staples: [], checkedItems: {}, children: [] };
+  data = { recipes: [], mealPlan: {}, staples: [], checkedItems: {}, children: [], cuisines: [...DEFAULT_CUISINES], usageHistory: [] };
   localStorage.removeItem('mp_data');
   localStorage.removeItem('mp_family');
   showSetup();
@@ -552,7 +573,7 @@ function showView(name) {
   if (name === 'recipes') renderRecipes();
   if (name === 'plan') renderMealPlan();
   if (name === 'grocery') renderGrocery();
-  if (name === 'sync') { renderStaples(); renderSync(); renderKids(); }
+  if (name === 'sync') { renderStaples(); renderCuisines(); renderSync(); renderKids(); }
 }
 
 // ===========================================================================
@@ -670,8 +691,52 @@ function renderRecipes() {
   const q = (document.getElementById('recipeSearch').value||'').toLowerCase();
   const list = data.recipes.filter(r => !q || r.name.toLowerCase().includes(q));
   const el = document.getElementById('recipeList');
-  if (!list.length) { el.innerHTML = `<div class="empty-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg><p>${q?'No matches':'No recipes yet. Tap + Add!'}</p></div>`; return; }
-  el.innerHTML = list.map(r => `<div class="card" onclick="showRecipeDetail('${r.id}')"><div class="card-title">${esc(r.name)}</div><div class="card-sub">${r.ingredients.length} ingredient${r.ingredients.length!==1?'s':''}${r.url?' · link':''}${r.notes?' · notes':''}</div></div>`).join('');
+  if (!list.length) { el.innerHTML = `<div class="empty-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg><p>${q?'No matches':'No recipes yet. Tap + Add!'}</p></div>`; }
+  else {
+    const { counts } = getRecipeStats();
+    el.innerHTML = list.map(r => {
+      const c = counts[r.id]||0;
+      const badge = c >= 3 ? ' <span style="font-size:11px;background:var(--accent-light);color:var(--accent);padding:1px 6px;border-radius:4px;font-weight:600;">★ Standard</span>' : '';
+      return `<div class="card" onclick="showRecipeDetail('${r.id}')"><div class="card-title">${esc(r.name)}${badge}</div><div class="card-sub">${r.cuisine?esc(r.cuisine)+' · ':''}${r.ingredients.length} ingredient${r.ingredients.length!==1?'s':''}${c?' · made '+c+'x':''}</div></div>`;
+    }).join('');
+  }
+
+  // Discovery section (only show when not searching)
+  const discoverEl = document.getElementById('recipeDiscover');
+  if (q) { discoverEl.innerHTML = ''; return; }
+
+  let dhtml = '';
+
+  // Standards — your greatest hits
+  const standards = getStandards();
+  if (standards.length) {
+    dhtml += '<div style="margin-top:24px;"><h2 style="display:flex;align-items:center;gap:8px;">★ Your Standards</h2><p style="font-size:13px;color:var(--text-secondary);margin-bottom:10px;">Your family\'s greatest hits — made 3+ times.</p>';
+    const { counts } = getRecipeStats();
+    dhtml += standards.slice(0,5).map(r => `<div class="card" onclick="showRecipeDetail('${r.id}')" style="border-left:3px solid var(--accent);"><div class="card-title">${esc(r.name)}</div><div class="card-sub">${r.cuisine?esc(r.cuisine)+' · ':''}Made ${counts[r.id]} times</div></div>`).join('');
+    dhtml += '</div>';
+  }
+
+  // Bring it back — recipes not made recently
+  const bringBack = getNotMadeRecently(4);
+  if (bringBack.length) {
+    const { lastUsed } = getRecipeStats();
+    dhtml += '<div style="margin-top:24px;"><h2 style="display:flex;align-items:center;gap:8px;">🔄 Bring It Back</h2><p style="font-size:13px;color:var(--text-secondary);margin-bottom:10px;">Recipes you haven\'t made in a while.</p>';
+    dhtml += bringBack.slice(0,5).map(r => {
+      const last = lastUsed[r.id]; const ago = last ? Math.round((Date.now()-new Date(last).getTime())/(7*24*60*60*1000)) : '?';
+      return `<div class="card" onclick="showRecipeDetail('${r.id}')" style="border-left:3px solid var(--blue);"><div class="card-title">${esc(r.name)}</div><div class="card-sub">${r.cuisine?esc(r.cuisine)+' · ':''}Last made ~${ago} weeks ago</div></div>`;
+    }).join('');
+    dhtml += '</div>';
+  }
+
+  // Try something new
+  const suggestions = getNewSuggestions();
+  if (suggestions.length) {
+    dhtml += '<div style="margin-top:24px;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;"><h2>✨ Try Something New</h2><button class="btn btn-secondary btn-sm" onclick="shuffleSuggestions()">Shuffle</button></div><p style="font-size:13px;color:var(--text-secondary);margin-bottom:10px;">Easy weeknight ideas to add to your book.</p>';
+    dhtml += suggestions.map((s, i) => `<div class="card" style="border-left:3px solid var(--green);"><div style="display:flex;justify-content:space-between;align-items:flex-start;"><div style="flex:1;"><div class="card-title">${esc(s.name)}</div><div class="card-sub">${esc(s.cuisine)} · ${esc(s.desc)}</div></div><button class="btn btn-sm btn-primary" onclick="event.stopPropagation();quickAddSuggestion(${i})" style="flex-shrink:0;margin-left:8px;">+ Add</button></div></div>`).join('');
+    dhtml += '</div>';
+  }
+
+  discoverEl.innerHTML = dhtml;
 }
 
 function showRecipeDetail(id) {
@@ -679,6 +744,16 @@ function showRecipeDetail(id) {
   currentDetailId = id;
   document.getElementById('detailTitle').textContent = r.name;
   let html = '';
+  const { counts, lastUsed } = getRecipeStats();
+  const useCount = counts[r.id]||0;
+  if (r.cuisine || useCount) {
+    html += '<p style="margin-bottom:8px;font-size:13px;font-weight:600;color:var(--accent);">';
+    if (r.cuisine) html += esc(r.cuisine);
+    if (r.cuisine && useCount) html += ' · ';
+    if (useCount) html += 'Made ' + useCount + ' time' + (useCount!==1?'s':'');
+    if (useCount >= 3) html += ' ★';
+    html += '</p>';
+  }
   if (r.url) html += `<p style="margin-bottom:12px;"><a href="${esc(r.url)}" target="_blank" style="color:var(--blue);font-size:14px;">View original recipe &rarr;</a></p>`;
   html += '<h3 style="margin-bottom:8px;">Ingredients</h3>';
   if (r.ingredients.length) { html += '<ul style="padding-left:18px;margin-bottom:16px;">'; r.ingredients.forEach(i => { html += `<li style="margin-bottom:4px;font-size:15px;">${esc(i.quantity?i.quantity+' ':'')}${esc(i.name)} <span style="color:var(--text-secondary);font-size:12px;">${esc(i.category)}</span></li>`; }); html += '</ul>'; }
@@ -698,6 +773,9 @@ function openRecipeModal(editId) {
   document.getElementById('recipeUrl').value = r?(r.url||''):'';
   document.getElementById('recipeNotes').value = r?(r.notes||''):'';
   document.getElementById('deleteRecipeBtn').style.display = r?'inline-flex':'none';
+  // Populate cuisine dropdown
+  const cuisineEl = document.getElementById('recipeCuisine');
+  cuisineEl.innerHTML = '<option value="">Select a cuisine...</option>' + getCuisines().map(c=>`<option ${(r&&r.cuisine)===c?'selected':''}>${c}</option>`).join('');
   document.getElementById('ingredientRows').innerHTML = '';
   if (r && r.ingredients.length) r.ingredients.forEach(i=>addIngredientRow(i.name,i.quantity,i.category)); else addIngredientRow();
   document.getElementById('recipeModal').classList.add('open');
@@ -722,8 +800,9 @@ function saveRecipe() {
   });
   const url = document.getElementById('recipeUrl').value.trim();
   const notes = document.getElementById('recipeNotes').value.trim();
-  if (editId) { const r = data.recipes.find(x=>x.id===editId); if(r){r.name=name;r.ingredients=ingredients;r.notes=notes;r.url=url;} }
-  else data.recipes.push({id:uid(),name,ingredients,notes,url});
+  const cuisine = document.getElementById('recipeCuisine').value;
+  if (editId) { const r = data.recipes.find(x=>x.id===editId); if(r){r.name=name;r.ingredients=ingredients;r.notes=notes;r.url=url;r.cuisine=cuisine;} }
+  else data.recipes.push({id:uid(),name,ingredients,notes,url,cuisine});
   persist(); closeRecipeModal(); renderRecipes();
   toast(editId?'Updated':'Recipe added');
 }
@@ -781,6 +860,7 @@ async function importFromUrl() {
     document.getElementById('recipeUrl').value=url;
     document.getElementById('recipeNotes').value=notes;
     document.getElementById('deleteRecipeBtn').style.display='none';
+    document.getElementById('recipeCuisine').innerHTML='<option value="">Select a cuisine...</option>'+getCuisines().map(c=>`<option>${c}</option>`).join('');
     document.getElementById('ingredientRows').innerHTML='';
     ingredients.forEach(i=>addIngredientRow(i.name,i.quantity,i.category));
     if(!ingredients.length)addIngredientRow();
@@ -801,6 +881,100 @@ function guessCategory(name) {
 }
 
 // ===========================================================================
+// RECIPE DISCOVERY & SUGGESTIONS
+// ===========================================================================
+const SUGGESTED_RECIPES = [
+  {name:'Honey Garlic Chicken Thighs',cuisine:'American',desc:'5-ingredient crispy thighs with a sweet garlic glaze. 30 min.',ingredients:['chicken thighs','honey','soy sauce','garlic','olive oil']},
+  {name:'One-Pan Lemon Herb Chicken & Potatoes',cuisine:'Mediterranean',desc:'Sheet pan dinner, minimal cleanup. Bright lemon flavor.',ingredients:['chicken breasts','baby potatoes','lemon','thyme','olive oil','garlic']},
+  {name:'15-Minute Shrimp Scampi',cuisine:'Italian',desc:'Buttery garlicky shrimp over pasta. Weeknight fast.',ingredients:['shrimp','linguine','butter','garlic','white wine','lemon','parsley']},
+  {name:'Black Bean Tacos',cuisine:'Mexican',desc:'Meatless Monday hero. Ready in 15 min.',ingredients:['black beans','tortillas','avocado','salsa','lime','cilantro','cheese']},
+  {name:'Chicken Teriyaki Rice Bowls',cuisine:'Asian',desc:'Sweet-savory chicken over rice with quick pickled cucumbers.',ingredients:['chicken thighs','rice','soy sauce','brown sugar','ginger','garlic','cucumber']},
+  {name:'Creamy Tuscan Chicken',cuisine:'Italian',desc:'Sun-dried tomatoes and spinach in a creamy garlic sauce.',ingredients:['chicken breasts','sun-dried tomatoes','spinach','heavy cream','garlic','parmesan']},
+  {name:'Easy Beef & Broccoli',cuisine:'Asian',desc:'Better than takeout, ready in 25 min.',ingredients:['flank steak','broccoli','soy sauce','brown sugar','garlic','ginger','cornstarch']},
+  {name:'Greek Chicken Bowls',cuisine:'Mediterranean',desc:'Fresh, healthy bowls with tzatziki. Great for meal prep.',ingredients:['chicken breasts','cucumber','tomatoes','red onion','feta','rice','greek yogurt']},
+  {name:'Sausage & Peppers Sheet Pan',cuisine:'Italian',desc:'Slice everything, roast, done. Perfect with crusty bread.',ingredients:['Italian sausages','bell peppers','onion','olive oil','Italian seasoning']},
+  {name:'Chicken Fajitas',cuisine:'Mexican',desc:'Sizzling peppers and onions with seasoned chicken.',ingredients:['chicken breasts','bell peppers','onion','tortillas','lime','cumin','chili powder']},
+  {name:'Garlic Butter Salmon',cuisine:'American',desc:'Pan-seared in 12 min. Fancy-feeling weeknight dinner.',ingredients:['salmon fillets','butter','garlic','lemon','dill']},
+  {name:'Thai Peanut Noodles',cuisine:'Asian',desc:'Creamy peanut sauce tossed with noodles and crunchy veggies.',ingredients:['rice noodles','peanut butter','soy sauce','lime','sriracha','carrots','edamame']},
+  {name:'Caprese Chicken',cuisine:'Italian',desc:'Topped with mozzarella, tomatoes, and balsamic glaze.',ingredients:['chicken breasts','mozzarella','tomatoes','basil','balsamic glaze','olive oil']},
+  {name:'BBQ Chicken Quesadillas',cuisine:'Mexican',desc:'Crispy, cheesy, and ready in 10 min. Kids love these.',ingredients:['tortillas','rotisserie chicken','bbq sauce','shredded cheese','red onion','cilantro']},
+  {name:'Lemon Garlic Butter Shrimp & Asparagus',cuisine:'Mediterranean',desc:'Light and elegant, 20 min from start to plate.',ingredients:['shrimp','asparagus','butter','garlic','lemon','red pepper flakes']},
+  {name:'Crispy Baked Chicken Tenders',cuisine:'American',desc:'Oven-baked, crunchy outside. Way better than frozen.',ingredients:['chicken tenders','panko breadcrumbs','parmesan','eggs','garlic powder']},
+  {name:'Beef Burrito Bowls',cuisine:'Mexican',desc:'Chipotle-style at home. Customize your toppings.',ingredients:['ground beef','rice','black beans','corn','salsa','sour cream','cheese','lettuce']},
+  {name:'Coconut Curry Chicken',cuisine:'Indian',desc:'Creamy mild curry, great over rice. Family-friendly spice level.',ingredients:['chicken thighs','coconut milk','curry paste','onion','garlic','rice','cilantro']},
+  {name:'Baked Pesto Pasta',cuisine:'Italian',desc:'Toss, bake, eat. Cheesy pesto goodness.',ingredients:['penne','pesto','mozzarella','cherry tomatoes','parmesan','cream']},
+  {name:'Korean Beef Bowls',cuisine:'Asian',desc:'Sweet and savory ground beef, ready in 20 min.',ingredients:['ground beef','soy sauce','brown sugar','sesame oil','garlic','ginger','rice','green onion']},
+  {name:'Chicken Tortilla Soup',cuisine:'Mexican',desc:'Cozy, spicy soup that comes together in one pot.',ingredients:['chicken breasts','fire-roasted tomatoes','black beans','corn','chicken broth','cumin','tortilla chips']},
+  {name:'Shakshuka',cuisine:'Mediterranean',desc:'Eggs poached in spiced tomato sauce. Great with crusty bread.',ingredients:['eggs','crushed tomatoes','onion','bell pepper','garlic','cumin','paprika']},
+  {name:'Butter Chicken',cuisine:'Indian',desc:'Mild, creamy, and absolutely delicious. Simpler than you think.',ingredients:['chicken thighs','tomato sauce','butter','cream','garam masala','garlic','ginger','rice']},
+  {name:'Stuffed Bell Peppers',cuisine:'American',desc:'Ground beef, rice, and cheese stuffed in colorful peppers.',ingredients:['bell peppers','ground beef','rice','tomato sauce','cheese','onion','garlic']},
+  {name:'Garlic Parmesan Pasta',cuisine:'Italian',desc:'Pantry staple dinner. Rich, simple, 15 min.',ingredients:['spaghetti','butter','garlic','parmesan','cream','black pepper','parsley']},
+  {name:'Chicken Caesar Wraps',cuisine:'Salads & Light',desc:'Lunch or light dinner. Crunchy, creamy, portable.',ingredients:['tortillas','chicken breast','romaine','parmesan','caesar dressing','croutons']},
+  {name:'Pulled Pork Sandwiches (Slow Cooker)',cuisine:'Southern',desc:'Set it and forget it. Tender, tangy pulled pork.',ingredients:['pork shoulder','bbq sauce','apple cider vinegar','brown sugar','buns','coleslaw mix']},
+  {name:'Veggie Fried Rice',cuisine:'Asian',desc:'Use leftover rice and whatever veggies you have.',ingredients:['cooked rice','eggs','soy sauce','sesame oil','frozen peas','carrots','green onion']},
+  {name:'Meatball Subs',cuisine:'Comfort Food',desc:'Cheesy, saucy, and satisfying. Use frozen meatballs for speed.',ingredients:['meatballs','marinara sauce','mozzarella','hoagie rolls','parmesan']},
+  {name:'Fish Tacos',cuisine:'Mexican',desc:'Crispy fish with slaw and creamy sauce. Light and fresh.',ingredients:['white fish','tortillas','cabbage','lime','sour cream','cilantro','chili powder']},
+  {name:'Chicken Parmesan',cuisine:'Italian',desc:'Classic comfort. Crispy cutlets under marinara and melted cheese.',ingredients:['chicken breasts','breadcrumbs','marinara sauce','mozzarella','parmesan','spaghetti']},
+  {name:'Chili (One-Pot)',cuisine:'Comfort Food',desc:'Hearty, warming, even better the next day.',ingredients:['ground beef','kidney beans','diced tomatoes','onion','garlic','chili powder','cumin']},
+  {name:'Grilled Cheese & Tomato Soup',cuisine:'Comfort Food',desc:'The ultimate cozy combo. Kids and adults agree.',ingredients:['bread','cheddar cheese','butter','canned tomato soup','cream']},
+  {name:'Chicken Alfredo',cuisine:'Italian',desc:'Rich, creamy pasta. A guaranteed crowd-pleaser.',ingredients:['fettuccine','chicken breasts','heavy cream','parmesan','butter','garlic']},
+  {name:'Taco Salad',cuisine:'Mexican',desc:'All the taco flavors in a big crunchy salad.',ingredients:['ground beef','lettuce','tomatoes','cheese','tortilla chips','salsa','sour cream']},
+  {name:'Baked Ziti',cuisine:'Italian',desc:'Cheesy pasta bake. Great for feeding a crowd.',ingredients:['ziti','ricotta','mozzarella','marinara sauce','Italian sausage','parmesan']},
+  {name:'Chicken Pot Pie (Easy)',cuisine:'Comfort Food',desc:'Store-bought crust makes this doable on a weeknight.',ingredients:['rotisserie chicken','frozen vegetables','cream of chicken soup','pie crust','butter']},
+  {name:'Dal Tadka',cuisine:'Indian',desc:'Comforting spiced lentils. Protein-packed and budget-friendly.',ingredients:['red lentils','onion','tomato','garlic','cumin','turmeric','ghee','rice']},
+  {name:'BLT Pasta Salad',cuisine:'Salads & Light',desc:'Summer dinner perfection. Bacon makes everything better.',ingredients:['rotini','bacon','cherry tomatoes','romaine','ranch dressing','avocado']},
+  {name:'Smash Burgers',cuisine:'American',desc:'Crispy edges, juicy center. The best homemade burger.',ingredients:['ground beef','burger buns','American cheese','lettuce','tomato','onion','pickles']},
+];
+
+let suggestionSeed = Math.floor(Math.random()*10000);
+
+function getRecipeStats() {
+  const history = data.usageHistory || [];
+  const counts = {}, lastUsed = {};
+  history.forEach(h => {
+    counts[h.recipeId] = (counts[h.recipeId]||0) + 1;
+    if (!lastUsed[h.recipeId] || h.date > lastUsed[h.recipeId]) lastUsed[h.recipeId] = h.date;
+  });
+  return { counts, lastUsed };
+}
+
+function getStandards() {
+  const { counts } = getRecipeStats();
+  return data.recipes
+    .filter(r => (counts[r.id]||0) >= 3)
+    .sort((a,b) => (counts[b.id]||0) - (counts[a.id]||0));
+}
+
+function getNotMadeRecently(weeksThreshold) {
+  const { lastUsed, counts } = getRecipeStats();
+  const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - (weeksThreshold||4)*7);
+  const cutoffStr = dateKey(cutoff);
+  return data.recipes.filter(r => {
+    const last = lastUsed[r.id];
+    return (counts[r.id]||0) > 0 && (!last || last < cutoffStr);
+  }).sort((a,b) => (lastUsed[a.id]||'').localeCompare(lastUsed[b.id]||''));
+}
+
+function getNewSuggestions() {
+  const existingNames = new Set(data.recipes.map(r => r.name.toLowerCase()));
+  const available = SUGGESTED_RECIPES.filter(s => !existingNames.has(s.name.toLowerCase()));
+  // Shuffle deterministically based on seed
+  const shuffled = [...available].sort((a,b) => (hashStr(a.name+suggestionSeed)%10000) - (hashStr(b.name+suggestionSeed)%10000));
+  return shuffled.slice(0, 6);
+}
+
+function shuffleSuggestions() { suggestionSeed = Math.floor(Math.random()*10000); renderRecipes(); }
+
+function quickAddSuggestion(idx) {
+  const suggestions = getNewSuggestions();
+  const s = suggestions[idx]; if (!s) return;
+  const ingredients = s.ingredients.map(name => ({name, quantity:'', category:guessCategory(name)}));
+  data.recipes.push({id:uid(), name:s.name, cuisine:s.cuisine, url:'', ingredients, notes:s.desc});
+  persist(); renderRecipes();
+  toast('Added "'+s.name+'" — edit to customize!');
+}
+
+// ===========================================================================
 // MEAL PLAN
 // ===========================================================================
 function changeWeek(dir) { currentWeekStart=new Date(currentWeekStart); currentWeekStart.setDate(currentWeekStart.getDate()+dir*7); renderMealPlan(); }
@@ -809,16 +983,51 @@ function renderMealPlan() {
   const end=new Date(currentWeekStart); end.setDate(end.getDate()+6);
   document.getElementById('weekLabel').textContent=fmtDate(currentWeekStart)+' – '+fmtDate(end);
   const days=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  // Figure out which cuisines are actually in use, plus Standards
+  const usedCuisines = [...new Set(data.recipes.map(r=>r.cuisine).filter(Boolean))].sort();
+  const standardIds = new Set(getStandards().map(r=>r.id));
+  if (standardIds.size) usedCuisines.unshift('★ Standards');
   let html='';
   for(let i=0;i<7;i++){
     const d=new Date(currentWeekStart);d.setDate(d.getDate()+i);const dk=dateKey(d);
-    const meals=data.mealPlan[dk]||[];const currentId=meals.length?meals[0].recipeId:'';
-    html+=`<div class="day-card"><div class="day-header"><span>${days[i]}</span><span class="date">${fmtDate(d)}</span></div><div class="day-meal"><select onchange="setMeal('${dk}',this.value)"><option value="">— none —</option>${data.recipes.map(r=>`<option value="${r.id}" ${currentId===r.id?'selected':''}>${esc(r.name)}</option>`).join('')}</select></div></div>`;
+    const meals=data.mealPlan[dk]||[];
+    const currentId=meals.length?meals[0].recipeId:'';
+    const currentRecipe=currentId?data.recipes.find(r=>r.id===currentId):null;
+    const selectedCuisine = currentRecipe ? (standardIds.has(currentRecipe.id) ? '★ Standards' : (currentRecipe.cuisine||'')) : '';
+    // Filter recipes by selected cuisine
+    let filteredRecipes;
+    if (selectedCuisine === '★ Standards') filteredRecipes = data.recipes.filter(r=>standardIds.has(r.id));
+    else if (selectedCuisine) filteredRecipes = data.recipes.filter(r=>r.cuisine===selectedCuisine);
+    else filteredRecipes = data.recipes;
+    html+=`<div class="day-card"><div class="day-header"><span>${days[i]}</span><span class="date">${fmtDate(d)}</span></div><div class="day-meal">`;
+    html+=`<select class="cuisine-select" onchange="filterCuisine('${dk}',this.value)"><option value="">Any cuisine</option>${usedCuisines.map(c=>`<option ${c===selectedCuisine?'selected':''}>${esc(c)}</option>`).join('')}</select>`;
+    html+=`<select onchange="setMeal('${dk}',this.value)"><option value="">— pick a recipe —</option>${filteredRecipes.map(r=>`<option value="${r.id}" ${currentId===r.id?'selected':''}>${esc(r.name)}</option>`).join('')}</select>`;
+    html+=`</div></div>`;
   }
   document.getElementById('mealPlanDays').innerHTML=html;
 }
 
-function setMeal(dk,recipeId) { if(recipeId) data.mealPlan[dk]=[{meal:'dinner',recipeId}]; else delete data.mealPlan[dk]; persist(); }
+function filterCuisine(dk, cuisine) {
+  const meals = data.mealPlan[dk]||[];
+  const currentId = meals.length?meals[0].recipeId:'';
+  const currentRecipe = currentId?data.recipes.find(r=>r.id===currentId):null;
+  // If current recipe doesn't match new cuisine, clear it
+  if(currentRecipe && cuisine) {
+    const standardIds = new Set(getStandards().map(r=>r.id));
+    const matches = cuisine === '★ Standards' ? standardIds.has(currentRecipe.id) : currentRecipe.cuisine === cuisine;
+    if (!matches) { delete data.mealPlan[dk]; persist(); }
+  }
+  renderMealPlan();
+}
+
+function setMeal(dk,recipeId) {
+  if(recipeId) {
+    data.mealPlan[dk]=[{meal:'dinner',recipeId}];
+    if(!data.usageHistory) data.usageHistory=[];
+    data.usageHistory.push({recipeId, date:dk, added:Date.now()});
+  } else delete data.mealPlan[dk];
+  persist();
+}
 
 // ===========================================================================
 // GROCERY
@@ -864,6 +1073,39 @@ function updateStaple(i,field,value){if(data.staples[i]){data.staples[i][field]=
 function removeStaple(i){data.staples.splice(i,1);persist();renderStaples();}
 
 // ===========================================================================
+// CUISINE MANAGEMENT
+// ===========================================================================
+function renderCuisines() {
+  const el = document.getElementById('cuisinesList'); if (!el) return;
+  const cuisines = getCuisines();
+  el.innerHTML = cuisines.map((c, i) => `<div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
+    <span style="flex:1; font-size:14px; padding:6px 0;">${esc(c)}</span>
+    <button onclick="removeCuisine(${i})" style="background:none; border:none; color:var(--red); font-size:18px; padding:4px 8px; line-height:1;" title="Remove">&times;</button>
+  </div>`).join('');
+}
+function addCuisine() {
+  const input = document.getElementById('newCuisineInput');
+  const name = (input.value || '').trim();
+  if (!name) return;
+  if (!data.cuisines) data.cuisines = [...DEFAULT_CUISINES];
+  if (data.cuisines.some(c => c.toLowerCase() === name.toLowerCase())) { toast('That cuisine already exists'); return; }
+  data.cuisines.push(name);
+  data.cuisines.sort();
+  input.value = '';
+  persist();
+  renderCuisines();
+  toast('Added "' + name + '"');
+}
+function removeCuisine(i) {
+  if (!data.cuisines) return;
+  const name = data.cuisines[i];
+  data.cuisines.splice(i, 1);
+  persist();
+  renderCuisines();
+  toast('Removed "' + name + '"');
+}
+
+// ===========================================================================
 // CALENDAR
 // ===========================================================================
 function exportCalendar() {
@@ -892,12 +1134,12 @@ function renderSync() {
 function loadSampleData() {
   if(data.recipes.length&&!confirm('Replace current data with samples?'))return;
   data.recipes = [
-    {id:uid(),name:'Chicken Stir Fry',url:'',ingredients:[{name:'Chicken breast',quantity:'1 lb',category:'Meat & Seafood'},{name:'Broccoli',quantity:'2 cups',category:'Produce'},{name:'Soy sauce',quantity:'3 tbsp',category:'Pantry'},{name:'Rice',quantity:'1 cup',category:'Pantry'},{name:'Garlic',quantity:'3 cloves',category:'Produce'},{name:'Sesame oil',quantity:'1 tbsp',category:'Pantry'}],notes:'Cook rice first. Stir fry chicken until golden, add veggies and sauce.'},
-    {id:uid(),name:'Pasta Bolognese',url:'',ingredients:[{name:'Ground beef',quantity:'1 lb',category:'Meat & Seafood'},{name:'Spaghetti',quantity:'1 lb',category:'Pantry'},{name:'Crushed tomatoes',quantity:'28 oz can',category:'Pantry'},{name:'Onion',quantity:'1',category:'Produce'},{name:'Garlic',quantity:'4 cloves',category:'Produce'},{name:'Parmesan',quantity:'1/2 cup',category:'Dairy'}],notes:'Simmer sauce 30+ minutes for best flavor.'},
-    {id:uid(),name:'Sheet Pan Salmon',url:'',ingredients:[{name:'Salmon fillets',quantity:'2',category:'Meat & Seafood'},{name:'Asparagus',quantity:'1 bunch',category:'Produce'},{name:'Lemon',quantity:'1',category:'Produce'},{name:'Olive oil',quantity:'2 tbsp',category:'Pantry'},{name:'Cherry tomatoes',quantity:'1 pint',category:'Produce'}],notes:'400F for 15 min. Season with salt, pepper, dill.'},
-    {id:uid(),name:'Tacos',url:'',ingredients:[{name:'Ground turkey',quantity:'1 lb',category:'Meat & Seafood'},{name:'Taco shells',quantity:'1 box',category:'Pantry'},{name:'Lettuce',quantity:'1 head',category:'Produce'},{name:'Tomatoes',quantity:'2',category:'Produce'},{name:'Shredded cheese',quantity:'1 cup',category:'Dairy'},{name:'Sour cream',quantity:'1/2 cup',category:'Dairy'},{name:'Salsa',quantity:'1 jar',category:'Pantry'}],notes:'Cumin, chili powder, paprika for seasoning.'},
-    {id:uid(),name:'Caesar Salad with Chicken',url:'',ingredients:[{name:'Romaine lettuce',quantity:'2 heads',category:'Produce'},{name:'Chicken breast',quantity:'2',category:'Meat & Seafood'},{name:'Caesar dressing',quantity:'1/2 cup',category:'Pantry'},{name:'Croutons',quantity:'1 cup',category:'Bakery'},{name:'Parmesan',quantity:'1/4 cup',category:'Dairy'}],notes:'Grill chicken, slice, toss with salad.'},
-    {id:uid(),name:'One-Pot Mac and Cheese',url:'',ingredients:[{name:'Elbow macaroni',quantity:'1 lb',category:'Pantry'},{name:'Milk',quantity:'3 cups',category:'Dairy'},{name:'Shredded cheddar',quantity:'2 cups',category:'Dairy'},{name:'Butter',quantity:'2 tbsp',category:'Dairy'},{name:'Mustard powder',quantity:'1 tsp',category:'Pantry'}],notes:'Cook pasta in milk, stirring often. Add cheese until melty. Kid favorite!'},
+    {id:uid(),name:'Chicken Stir Fry',cuisine:'Asian',url:'',ingredients:[{name:'Chicken breast',quantity:'1 lb',category:'Meat & Seafood'},{name:'Broccoli',quantity:'2 cups',category:'Produce'},{name:'Soy sauce',quantity:'3 tbsp',category:'Pantry'},{name:'Rice',quantity:'1 cup',category:'Pantry'},{name:'Garlic',quantity:'3 cloves',category:'Produce'},{name:'Sesame oil',quantity:'1 tbsp',category:'Pantry'}],notes:'Cook rice first. Stir fry chicken until golden, add veggies and sauce.'},
+    {id:uid(),name:'Pasta Bolognese',cuisine:'Italian',url:'',ingredients:[{name:'Ground beef',quantity:'1 lb',category:'Meat & Seafood'},{name:'Spaghetti',quantity:'1 lb',category:'Pantry'},{name:'Crushed tomatoes',quantity:'28 oz can',category:'Pantry'},{name:'Onion',quantity:'1',category:'Produce'},{name:'Garlic',quantity:'4 cloves',category:'Produce'},{name:'Parmesan',quantity:'1/2 cup',category:'Dairy'}],notes:'Simmer sauce 30+ minutes for best flavor.'},
+    {id:uid(),name:'Sheet Pan Salmon',cuisine:'Mediterranean',url:'',ingredients:[{name:'Salmon fillets',quantity:'2',category:'Meat & Seafood'},{name:'Asparagus',quantity:'1 bunch',category:'Produce'},{name:'Lemon',quantity:'1',category:'Produce'},{name:'Olive oil',quantity:'2 tbsp',category:'Pantry'},{name:'Cherry tomatoes',quantity:'1 pint',category:'Produce'}],notes:'400F for 15 min. Season with salt, pepper, dill.'},
+    {id:uid(),name:'Tacos',cuisine:'Mexican',url:'',ingredients:[{name:'Ground turkey',quantity:'1 lb',category:'Meat & Seafood'},{name:'Taco shells',quantity:'1 box',category:'Pantry'},{name:'Lettuce',quantity:'1 head',category:'Produce'},{name:'Tomatoes',quantity:'2',category:'Produce'},{name:'Shredded cheese',quantity:'1 cup',category:'Dairy'},{name:'Sour cream',quantity:'1/2 cup',category:'Dairy'},{name:'Salsa',quantity:'1 jar',category:'Pantry'}],notes:'Cumin, chili powder, paprika for seasoning.'},
+    {id:uid(),name:'Caesar Salad with Chicken',cuisine:'Salads & Light',url:'',ingredients:[{name:'Romaine lettuce',quantity:'2 heads',category:'Produce'},{name:'Chicken breast',quantity:'2',category:'Meat & Seafood'},{name:'Caesar dressing',quantity:'1/2 cup',category:'Pantry'},{name:'Croutons',quantity:'1 cup',category:'Bakery'},{name:'Parmesan',quantity:'1/4 cup',category:'Dairy'}],notes:'Grill chicken, slice, toss with salad.'},
+    {id:uid(),name:'One-Pot Mac and Cheese',cuisine:'Comfort Food',url:'',ingredients:[{name:'Elbow macaroni',quantity:'1 lb',category:'Pantry'},{name:'Milk',quantity:'3 cups',category:'Dairy'},{name:'Shredded cheddar',quantity:'2 cups',category:'Dairy'},{name:'Butter',quantity:'2 tbsp',category:'Dairy'},{name:'Mustard powder',quantity:'1 tsp',category:'Pantry'}],notes:'Cook pasta in milk, stirring often. Add cheese until melty. Kid favorite!'},
   ];
   data.staples = [{name:'Milk',quantity:'1 gallon',category:'Dairy'},{name:'Eggs',quantity:'1 dozen',category:'Dairy'},{name:'Bread',quantity:'1 loaf',category:'Bakery'},{name:'Bananas',quantity:'1 bunch',category:'Produce'},{name:'Butter',quantity:'1 stick',category:'Dairy'},{name:'Coffee',quantity:'1 bag',category:'Beverages'}];
   data.children = [{name:'',birthday:'2022-03-01'},{name:'',birthday:'2024-11-01'}];
@@ -919,6 +1161,7 @@ function toast(msg){const el=document.getElementById('toast');el.textContent=msg
 loadLocal();
 if(!data.children) data.children=[];
 if(!data.checkedItems) data.checkedItems={};
+if(!data.usageHistory) data.usageHistory=[];
 initFirebase();
 
 // Register service worker for PWA
