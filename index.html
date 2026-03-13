@@ -159,6 +159,18 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
 .empty-state { text-align: center; padding: 40px 20px; color: var(--text-secondary); }
 .empty-state svg { width: 48px; height: 48px; margin-bottom: 12px; opacity: 0.4; }
 .empty-state p { font-size: 15px; }
+.meal-toggle { display: flex; border-radius: 6px; overflow: hidden; border: 1px solid var(--border); margin-bottom: 4px; }
+.meal-toggle button { flex: 1; padding: 6px 4px; border: none; background: var(--surface); font-size: 12px; font-weight: 600; color: var(--text-secondary); cursor: pointer; transition: all 0.15s; }
+.meal-toggle button.active-cook { background: var(--green); color: white; }
+.meal-toggle button.active-dd { background: #ff3008; color: white; }
+.dd-form { display: flex; flex-direction: column; gap: 4px; }
+.dd-form input { padding: 7px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; }
+.dd-form .dd-row { display: flex; gap: 4px; }
+.dd-form .dd-row input { flex: 1; min-width: 0; }
+.dd-logged { font-size: 13px; padding: 4px 0; }
+.dd-logged .dd-restaurant { font-weight: 600; }
+.dd-logged .dd-cost { color: #ff3008; font-weight: 600; }
+
 .cuisine-group { margin-bottom: 4px; }
 .cuisine-group-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer; user-select: none; }
 .cuisine-group-header:active { background: var(--surface-hover); }
@@ -235,6 +247,7 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
   <!-- HOME -->
   <div id="view-home" class="view active">
     <h1>Good evening!</h1>
+    <div id="homeDoorDash" style="margin-bottom:16px;"></div>
     <div id="homeTip"></div>
     <div id="homeTonightCard" style="margin-bottom:16px;"></div>
     <div id="homeWeekSummary"></div>
@@ -303,6 +316,19 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
         <span id="syncBadge" style="font-size:12px; font-weight:600; padding:3px 10px; border-radius:20px;"></span>
       </div>
       <p id="syncInfo" style="font-size:13px; color:var(--text-secondary);"></p>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
+      <h3 style="margin-bottom:8px;">DoorDash Budget</h3>
+      <p style="font-size:13px; color:var(--text-secondary); margin-bottom:10px;">Set monthly limits to keep takeout in check.</p>
+      <div class="form-group" style="margin-bottom:8px;">
+        <label>Monthly Budget ($)</label>
+        <input type="number" id="ddBudget" placeholder="150" step="10" onchange="saveDoorDashSettings()">
+      </div>
+      <div class="form-group" style="margin-bottom:0;">
+        <label>Max Orders Per Month</label>
+        <input type="number" id="ddTarget" placeholder="4" step="1" onchange="saveDoorDashSettings()">
+      </div>
     </div>
 
     <div class="card" style="margin-bottom:16px;">
@@ -439,7 +465,7 @@ function initFirebase() {
 const CATEGORIES = ['Produce','Meat & Seafood','Dairy','Bakery','Pantry','Frozen','Beverages','Other'];
 const DEFAULT_CUISINES = ['American','Mexican','Italian','Asian','Mediterranean','Indian','Southern','Comfort Food','Salads & Light','Other'];
 function getCuisines() { return (data.cuisines && data.cuisines.length) ? data.cuisines : DEFAULT_CUISINES; }
-let data = { recipes: [], mealPlan: {}, staples: [], checkedItems: {}, children: [], cuisines: [...DEFAULT_CUISINES], usageHistory: [] };
+let data = { recipes: [], mealPlan: {}, staples: [], checkedItems: {}, children: [], cuisines: [...DEFAULT_CUISINES], usageHistory: [], doordash: { orders: [], monthlyBudget: 150, monthlyTarget: 4 } };
 let familyCode = null;
 let currentWeekStart = getMonday(new Date());
 let cuisineFilters = {}; // tracks user's cuisine selection per day key
@@ -480,6 +506,7 @@ async function saveToFirebase() {
       checkedItems: data.checkedItems || {},
       cuisines: data.cuisines || [...DEFAULT_CUISINES],
       usageHistory: data.usageHistory || [],
+      doordash: data.doordash || { orders: [], monthlyBudget: 150, monthlyTarget: 4 },
       updatedAt: firebase.firestore.FieldValue.serverTimestamp()
     });
   } catch(e) { console.log('Save failed:', e); }
@@ -493,8 +520,8 @@ function startListening() {
     if (!doc.exists) return;
     const remote = doc.data();
     // Only update if data actually changed (avoid echo from our own save)
-    const remoteStr = JSON.stringify({ r: remote.recipes, m: remote.mealPlan, s: remote.staples, c: remote.children, ci: remote.checkedItems, cu: remote.cuisines, uh: remote.usageHistory });
-    const localStr = JSON.stringify({ r: data.recipes, m: data.mealPlan, s: data.staples, c: data.children, ci: data.checkedItems, cu: data.cuisines, uh: data.usageHistory });
+    const remoteStr = JSON.stringify({ r: remote.recipes, m: remote.mealPlan, s: remote.staples, c: remote.children, ci: remote.checkedItems, cu: remote.cuisines, uh: remote.usageHistory, dd: remote.doordash });
+    const localStr = JSON.stringify({ r: data.recipes, m: data.mealPlan, s: data.staples, c: data.children, ci: data.checkedItems, cu: data.cuisines, uh: data.usageHistory, dd: data.doordash });
     if (remoteStr !== localStr) {
       data.recipes = remote.recipes || [];
       data.mealPlan = remote.mealPlan || {};
@@ -503,6 +530,7 @@ function startListening() {
       data.checkedItems = remote.checkedItems || {};
       data.cuisines = remote.cuisines || [...DEFAULT_CUISINES];
       data.usageHistory = remote.usageHistory || [];
+      data.doordash = remote.doordash || { orders: [], monthlyBudget: 150, monthlyTarget: 4 };
       persistLocal();
       refreshCurrentView();
     }
@@ -531,7 +559,7 @@ function showApp() {
 
 async function createFamily() {
   familyCode = document.getElementById('newFamilyCode').textContent;
-  data = { recipes: [], mealPlan: {}, staples: [], checkedItems: {}, children: [], cuisines: [...DEFAULT_CUISINES], usageHistory: [] };
+  data = { recipes: [], mealPlan: {}, staples: [], checkedItems: {}, children: [], cuisines: [...DEFAULT_CUISINES], usageHistory: [], doordash: { orders: [], monthlyBudget: 150, monthlyTarget: 4 } };
   persistLocal();
   if (firebaseReady) {
     await saveToFirebase();
@@ -559,6 +587,7 @@ async function joinFamily() {
         data.checkedItems = remote.checkedItems || {};
         data.cuisines = remote.cuisines || [...DEFAULT_CUISINES];
         data.usageHistory = remote.usageHistory || [];
+        data.doordash = remote.doordash || { orders: [], monthlyBudget: 150, monthlyTarget: 4 };
         persistLocal();
       }
     } catch(e) { console.log('Join fetch failed:', e); }
@@ -572,7 +601,7 @@ function leaveFamily() {
   if (!confirm('Disconnect from this family? Your data will stay on the server for your partner.')) return;
   if (unsubscribe) unsubscribe();
   familyCode = null;
-  data = { recipes: [], mealPlan: {}, staples: [], checkedItems: {}, children: [], cuisines: [...DEFAULT_CUISINES], usageHistory: [] };
+  data = { recipes: [], mealPlan: {}, staples: [], checkedItems: {}, children: [], cuisines: [...DEFAULT_CUISINES], usageHistory: [], doordash: { orders: [], monthlyBudget: 150, monthlyTarget: 4 } };
   localStorage.removeItem('mp_data');
   localStorage.removeItem('mp_family');
   showSetup();
@@ -591,27 +620,86 @@ function showView(name) {
   if (name === 'plan') renderMealPlan();
   if (name === 'grocery') renderGrocery();
   if (name === 'staples') renderStaples();
-  if (name === 'sync') { renderCuisines(); renderSync(); renderKids(); }
+  if (name === 'sync') { renderDoorDashSettings(); renderCuisines(); renderSync(); renderKids(); }
 }
 
 // ===========================================================================
 // HOME
 // ===========================================================================
+function renderDoorDashTracker() {
+  const el = document.getElementById('homeDoorDash');
+  const dd = data.doordash || { orders: [], monthlyBudget: 150, monthlyTarget: 4 };
+  const now = new Date();
+  const monthKey = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0');
+  const monthOrders = dd.orders.filter(o => o.date && o.date.startsWith(monthKey) && o.restaurant);
+  const totalSpent = monthOrders.reduce((s,o) => s + (o.cost||0), 0);
+  const orderCount = monthOrders.length;
+  const budget = dd.monthlyBudget || 0;
+  const target = dd.monthlyTarget || 0;
+  const monthName = now.toLocaleDateString('en-US', { month: 'long' });
+
+  // Progress bars
+  const spendPct = budget > 0 ? Math.min(100, (totalSpent/budget)*100) : 0;
+  const countPct = target > 0 ? Math.min(100, (orderCount/target)*100) : 0;
+  const overBudget = budget > 0 && totalSpent > budget;
+  const overCount = target > 0 && orderCount > target;
+
+  let html = `<div class="card" style="border-left:4px solid #ff3008;">`;
+  html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><div style="font-size:12px;font-weight:600;color:#ff3008;text-transform:uppercase;">🛵 DoorDash — ${esc(monthName)}</div></div>`;
+
+  // Spending bar
+  html += `<div style="margin-bottom:10px;"><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:3px;"><span>Spent</span><span style="font-weight:600;color:${overBudget?'var(--red)':'var(--text)'};">$${totalSpent.toFixed(2)}${budget?' / $'+budget.toFixed(0):''}</span></div>`;
+  if (budget > 0) html += `<div style="background:var(--border);border-radius:4px;height:6px;overflow:hidden;"><div style="width:${spendPct}%;height:100%;border-radius:4px;background:${overBudget?'var(--red)':'#ff3008'};transition:width 0.3s;"></div></div>`;
+  html += `</div>`;
+
+  // Order count bar
+  html += `<div><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:3px;"><span>Orders</span><span style="font-weight:600;color:${overCount?'var(--red)':'var(--text)'};">${orderCount}${target?' / '+target:''}</span></div>`;
+  if (target > 0) html += `<div style="background:var(--border);border-radius:4px;height:6px;overflow:hidden;"><div style="width:${countPct}%;height:100%;border-radius:4px;background:${overCount?'var(--red)':'#ff3008'};transition:width 0.3s;"></div></div>`;
+  html += `</div>`;
+
+  // Recent orders (last 3)
+  if (monthOrders.length) {
+    const recent = [...monthOrders].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,3);
+    html += `<div style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px;font-size:12px;color:var(--text-secondary);">`;
+    recent.forEach(o => {
+      const d = new Date(o.date+'T12:00:00');
+      const label = d.toLocaleDateString('en-US',{month:'short',day:'numeric'});
+      html += `<div style="display:flex;justify-content:space-between;padding:2px 0;"><span>${esc(o.restaurant)}</span><span>${o.cost?'$'+Number(o.cost).toFixed(2):''} · ${label}</span></div>`;
+    });
+    html += `</div>`;
+  }
+
+  html += `</div>`;
+  el.innerHTML = html;
+}
+
 function renderHome() {
   const h = new Date().getHours();
   document.querySelector('#view-home h1').textContent = h < 12 ? 'Good morning!' : h < 17 ? 'Good afternoon!' : 'Good evening!';
 
+  // DoorDash tracker
+  renderDoorDashTracker();
+
   const today = dateKey(new Date());
+  const todayDD = (data.doordash||{orders:[]}).orders.find(o=>o.date===today);
   const todayMeals = data.mealPlan[today] || [];
   const tonight = todayMeals.length ? data.recipes.find(r => r.id === todayMeals[0].recipeId) : null;
   const card = document.getElementById('homeTonightCard');
-  card.innerHTML = tonight
-    ? `<div class="card" onclick="showRecipeDetail('${tonight.id}')" style="border-left:4px solid var(--accent);"><div style="font-size:12px;font-weight:600;color:var(--accent);text-transform:uppercase;margin-bottom:4px;">Tonight's Dinner</div><div class="card-title">${esc(tonight.name)}</div><div class="card-sub">${tonight.ingredients.length} ingredients</div></div>`
-    : `<div class="card" onclick="showView('plan')" style="border-left:4px solid var(--border);"><div style="font-size:12px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;margin-bottom:4px;">Tonight's Dinner</div><div class="card-title" style="color:var(--text-secondary);">Nothing planned</div><div class="card-sub">Tap to plan this week</div></div>`;
+  if (todayDD && todayDD.restaurant) {
+    card.innerHTML = `<div class="card" onclick="showView('plan')" style="border-left:4px solid #ff3008;"><div style="font-size:12px;font-weight:600;color:#ff3008;text-transform:uppercase;margin-bottom:4px;">Tonight's Dinner — DoorDash</div><div class="card-title">🛵 ${esc(todayDD.restaurant)}</div><div class="card-sub">${todayDD.items?esc(todayDD.items):''}${todayDD.cost?' · $'+Number(todayDD.cost).toFixed(2):''}</div></div>`;
+  } else if (todayDD) {
+    card.innerHTML = `<div class="card" onclick="showView('plan')" style="border-left:4px solid #ff3008;"><div style="font-size:12px;font-weight:600;color:#ff3008;text-transform:uppercase;margin-bottom:4px;">Tonight's Dinner — DoorDash</div><div class="card-title">🛵 DoorDash night</div><div class="card-sub">Tap to log your order</div></div>`;
+  } else {
+    card.innerHTML = tonight
+      ? `<div class="card" onclick="showRecipeDetail('${tonight.id}')" style="border-left:4px solid var(--accent);"><div style="font-size:12px;font-weight:600;color:var(--accent);text-transform:uppercase;margin-bottom:4px;">Tonight's Dinner</div><div class="card-title">${esc(tonight.name)}</div><div class="card-sub">${tonight.ingredients.length} ingredients</div></div>`
+      : `<div class="card" onclick="showView('plan')" style="border-left:4px solid var(--border);"><div style="font-size:12px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;margin-bottom:4px;">Tonight's Dinner</div><div class="card-title" style="color:var(--text-secondary);">Nothing planned</div><div class="card-sub">Tap to plan this week</div></div>`;
+  }
 
-  let planned = 0;
-  for (let i = 0; i < 7; i++) { const d = new Date(currentWeekStart); d.setDate(d.getDate()+i); if ((data.mealPlan[dateKey(d)]||[]).length) planned++; }
-  document.getElementById('homeWeekSummary').innerHTML = `<div class="card" onclick="showView('plan')"><div class="card-title">${planned}/7 dinners planned</div><div class="card-sub">this week &middot; ${data.recipes.length} recipes in your book</div></div>`;
+  let planned = 0, ddThisWeek = 0;
+  const ddOrders = (data.doordash||{orders:[]}).orders;
+  for (let i = 0; i < 7; i++) { const d = new Date(currentWeekStart); d.setDate(d.getDate()+i); const dk=dateKey(d); if ((data.mealPlan[dk]||[]).length) planned++; if(ddOrders.find(o=>o.date===dk)) ddThisWeek++; }
+  const totalPlanned = planned + ddThisWeek;
+  document.getElementById('homeWeekSummary').innerHTML = `<div class="card" onclick="showView('plan')"><div class="card-title">${totalPlanned}/7 dinners planned</div><div class="card-sub">${planned} cooking${ddThisWeek?' · '+ddThisWeek+' DoorDash':''} · ${data.recipes.length} recipes in your book</div></div>`;
 
   renderTip();
 }
@@ -1041,33 +1129,93 @@ function quickAddSuggestion(idx) {
 // ===========================================================================
 function changeWeek(dir) { currentWeekStart=new Date(currentWeekStart); currentWeekStart.setDate(currentWeekStart.getDate()+dir*7); cuisineFilters={}; renderMealPlan(); }
 
+function getDayMode(dk) {
+  // Check if this day has a doordash order
+  const dd = data.doordash || { orders: [] };
+  const order = dd.orders.find(o => o.date === dk);
+  if (order) return 'doordash';
+  return 'cooking';
+}
+
 function renderMealPlan() {
   const end=new Date(currentWeekStart); end.setDate(end.getDate()+6);
   document.getElementById('weekLabel').textContent=fmtDate(currentWeekStart)+' – '+fmtDate(end);
   const days=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-  // Figure out which cuisines are actually in use, plus Standards
   const usedCuisines = [...new Set(data.recipes.map(r=>r.cuisine).filter(Boolean))].sort();
   const standardIds = new Set(getStandards().map(r=>r.id));
   if (standardIds.size) usedCuisines.unshift('★ Standards');
   let html='';
   for(let i=0;i<7;i++){
     const d=new Date(currentWeekStart);d.setDate(d.getDate()+i);const dk=dateKey(d);
+    const mode = getDayMode(dk);
     const meals=data.mealPlan[dk]||[];
     const currentId=meals.length?meals[0].recipeId:'';
     const currentRecipe=currentId?data.recipes.find(r=>r.id===currentId):null;
-    // Use explicit user filter if set, otherwise infer from current recipe
     let selectedCuisine = cuisineFilters[dk] !== undefined ? cuisineFilters[dk] : (currentRecipe ? (standardIds.has(currentRecipe.id) ? '★ Standards' : (currentRecipe.cuisine||'')) : '');
-    // Filter recipes by selected cuisine
     let filteredRecipes;
     if (selectedCuisine === '★ Standards') filteredRecipes = data.recipes.filter(r=>standardIds.has(r.id));
     else if (selectedCuisine) filteredRecipes = data.recipes.filter(r=>r.cuisine===selectedCuisine);
     else filteredRecipes = data.recipes;
+
     html+=`<div class="day-card"><div class="day-header"><span>${days[i]}</span><span class="date">${fmtDate(d)}</span></div><div class="day-meal">`;
-    html+=`<select class="cuisine-select" onchange="filterCuisine('${dk}',this.value)"><option value="">Any cuisine</option>${usedCuisines.map(c=>`<option ${c===selectedCuisine?'selected':''}>${esc(c)}</option>`).join('')}</select>`;
-    html+=`<select onchange="setMeal('${dk}',this.value)"><option value="">— pick a recipe —</option>${filteredRecipes.map(r=>`<option value="${r.id}" ${currentId===r.id?'selected':''}>${esc(r.name)}</option>`).join('')}</select>`;
+    // Toggle: Cooking vs DoorDash
+    html+=`<div class="meal-toggle"><button class="${mode==='cooking'?'active-cook':''}" onclick="setDayMode('${dk}','cooking')">🍳 Cooking</button><button class="${mode==='doordash'?'active-dd':''}" onclick="setDayMode('${dk}','doordash')">🛵 DoorDash</button></div>`;
+
+    if (mode === 'cooking') {
+      html+=`<select class="cuisine-select" onchange="filterCuisine('${dk}',this.value)"><option value="">Any cuisine</option>${usedCuisines.map(c=>`<option ${c===selectedCuisine?'selected':''}>${esc(c)}</option>`).join('')}</select>`;
+      html+=`<select onchange="setMeal('${dk}',this.value)"><option value="">— pick a recipe —</option>${filteredRecipes.map(r=>`<option value="${r.id}" ${currentId===r.id?'selected':''}>${esc(r.name)}</option>`).join('')}</select>`;
+    } else {
+      // DoorDash mode
+      const order = (data.doordash||{orders:[]}).orders.find(o=>o.date===dk);
+      if (order && order.restaurant && !order._editing) {
+        html+=`<div class="dd-logged"><span class="dd-restaurant">${esc(order.restaurant)}</span>${order.cost?' · <span class="dd-cost">$'+Number(order.cost).toFixed(2)+'</span>':''}</div>`;
+        html+=`<button class="btn btn-sm btn-secondary" onclick="editDoorDash('${dk}')" style="font-size:12px;">Edit</button>`;
+      } else {
+        html+=`<div class="dd-form"><input type="text" id="dd-rest-${dk}" placeholder="Restaurant name" value="${order?esc(order.restaurant||''):''}" onchange="saveDoorDash('${dk}')"><div class="dd-row"><input type="number" id="dd-cost-${dk}" placeholder="$ Total" step="0.01" value="${order&&order.cost?order.cost:''}" onchange="saveDoorDash('${dk}')"><input type="text" id="dd-what-${dk}" placeholder="What you got" value="${order?esc(order.items||''):''}" onchange="saveDoorDash('${dk}')"></div></div>`;
+      }
+    }
     html+=`</div></div>`;
   }
   document.getElementById('mealPlanDays').innerHTML=html;
+}
+
+function setDayMode(dk, mode) {
+  if (mode === 'doordash') {
+    // Clear any recipe for this day and create a blank DD order
+    delete data.mealPlan[dk];
+    if(!data.doordash) data.doordash={orders:[],monthlyBudget:150,monthlyTarget:4};
+    if(!data.doordash.orders.find(o=>o.date===dk)) {
+      data.doordash.orders.push({date:dk, restaurant:'', cost:null, items:''});
+    }
+  } else {
+    // Switch back to cooking — remove DD order for this day
+    if(data.doordash && data.doordash.orders) {
+      data.doordash.orders = data.doordash.orders.filter(o=>o.date!==dk);
+    }
+  }
+  persist(); renderMealPlan();
+}
+
+function saveDoorDash(dk) {
+  if(!data.doordash) data.doordash={orders:[],monthlyBudget:150,monthlyTarget:4};
+  let order = data.doordash.orders.find(o=>o.date===dk);
+  if(!order) { order={date:dk,restaurant:'',cost:null,items:''}; data.doordash.orders.push(order); }
+  const restEl = document.getElementById('dd-rest-'+dk);
+  const costEl = document.getElementById('dd-cost-'+dk);
+  const whatEl = document.getElementById('dd-what-'+dk);
+  if(restEl) order.restaurant = restEl.value;
+  if(costEl) order.cost = costEl.value ? parseFloat(costEl.value) : null;
+  if(whatEl) order.items = whatEl.value;
+  delete order._editing;
+  persist();
+}
+
+function editDoorDash(dk) {
+  // Re-render to show the form instead of the summary
+  if(!data.doordash) return;
+  const order = data.doordash.orders.find(o=>o.date===dk);
+  if(order) order._editing = true;
+  renderMealPlan();
 }
 
 function filterCuisine(dk, cuisine) {
@@ -1098,7 +1246,8 @@ function setMeal(dk,recipeId) {
 // ===========================================================================
 function getGroceryItems() {
   const items={};
-  for(let i=0;i<7;i++){const d=new Date(currentWeekStart);d.setDate(d.getDate()+i);const dk=dateKey(d);(data.mealPlan[dk]||[]).forEach(m=>{const r=data.recipes.find(x=>x.id===m.recipeId);if(!r)return;r.ingredients.forEach(ing=>{const key=ing.name.toLowerCase();if(!items[key])items[key]={name:ing.name,quantities:[],category:ing.category};if(ing.quantity)items[key].quantities.push(ing.quantity);});});}
+  const ddDates = new Set((data.doordash||{orders:[]}).orders.map(o=>o.date));
+  for(let i=0;i<7;i++){const d=new Date(currentWeekStart);d.setDate(d.getDate()+i);const dk=dateKey(d);if(ddDates.has(dk))continue;(data.mealPlan[dk]||[]).forEach(m=>{const r=data.recipes.find(x=>x.id===m.recipeId);if(!r)return;r.ingredients.forEach(ing=>{const key=ing.name.toLowerCase();if(!items[key])items[key]={name:ing.name,quantities:[],category:ing.category};if(ing.quantity)items[key].quantities.push(ing.quantity);});});}
   (data.staples||[]).forEach(s=>{if(!s.name)return;const key=s.name.toLowerCase();if(!items[key])items[key]={name:s.name,quantities:[],category:s.category||'Other'};if(s.quantity)items[key].quantities.push(s.quantity+' (staple)');});
   return items;
 }
@@ -1183,6 +1332,22 @@ function exportCalendar() {
 // ===========================================================================
 // SETTINGS / SYNC
 // ===========================================================================
+function renderDoorDashSettings() {
+  const dd = data.doordash || { orders:[], monthlyBudget:150, monthlyTarget:4 };
+  document.getElementById('ddBudget').value = dd.monthlyBudget || '';
+  document.getElementById('ddTarget').value = dd.monthlyTarget || '';
+}
+
+function saveDoorDashSettings() {
+  if(!data.doordash) data.doordash = { orders:[], monthlyBudget:150, monthlyTarget:4 };
+  const b = document.getElementById('ddBudget').value;
+  const t = document.getElementById('ddTarget').value;
+  data.doordash.monthlyBudget = b ? parseFloat(b) : 0;
+  data.doordash.monthlyTarget = t ? parseInt(t) : 0;
+  persist();
+  toast('Budget updated');
+}
+
 function renderSync() {
   const badge=document.getElementById('syncBadge');const info=document.getElementById('syncInfo');
   const mealCount=Object.values(data.mealPlan).reduce((s,m)=>s+m.length,0);
@@ -1226,6 +1391,7 @@ loadLocal();
 if(!data.children) data.children=[];
 if(!data.checkedItems) data.checkedItems={};
 if(!data.usageHistory) data.usageHistory=[];
+if(!data.doordash) data.doordash={ orders:[], monthlyBudget:150, monthlyTarget:4 };
 initFirebase();
 
 // Register service worker for PWA
