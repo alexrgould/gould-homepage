@@ -247,10 +247,10 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
   <!-- HOME -->
   <div id="view-home" class="view active">
     <h1>Good evening!</h1>
-    <div id="homeDoorDash" style="margin-bottom:16px;"></div>
     <div id="homeTip"></div>
     <div id="homeTonightCard" style="margin-bottom:16px;"></div>
     <div id="homeWeekSummary"></div>
+    <div id="homeDoorDash" style="margin-top:8px;"></div>
   </div>
 
   <!-- RECIPES -->
@@ -319,15 +319,26 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
     </div>
 
     <div class="card" style="margin-bottom:16px;">
-      <h3 style="margin-bottom:8px;">DoorDash Budget</h3>
-      <p style="font-size:13px; color:var(--text-secondary); margin-bottom:10px;">Set monthly limits to keep takeout in check.</p>
+      <h3 style="margin-bottom:8px;">DoorDash</h3>
+      <p style="font-size:13px; color:var(--text-secondary); margin-bottom:10px;">Manage your go-to restaurants and monthly limits.</p>
       <div class="form-group" style="margin-bottom:8px;">
-        <label>Monthly Budget ($)</label>
-        <input type="number" id="ddBudget" placeholder="150" step="10" onchange="saveDoorDashSettings()">
+        <label>Favorite Restaurants</label>
+        <div id="ddRestaurantsList"></div>
+        <div style="display:flex; gap:4px; margin-top:6px;">
+          <input type="text" id="newDDRestName" placeholder="Restaurant name" style="flex:1;">
+          <select id="newDDRestCuisine" style="flex:0 0 auto; width:110px; padding:8px 6px; border:1px solid var(--border); border-radius:var(--radius); font-size:13px;"></select>
+          <button class="btn btn-secondary btn-sm" onclick="addDDRestaurant()">+</button>
+        </div>
       </div>
-      <div class="form-group" style="margin-bottom:0;">
-        <label>Max Orders Per Month</label>
-        <input type="number" id="ddTarget" placeholder="4" step="1" onchange="saveDoorDashSettings()">
+      <div style="border-top:1px solid var(--border); padding-top:10px; margin-top:10px;">
+        <div class="form-group" style="margin-bottom:8px;">
+          <label>Monthly Budget ($)</label>
+          <input type="number" id="ddBudget" placeholder="150" step="10" onchange="saveDoorDashSettings()">
+        </div>
+        <div class="form-group" style="margin-bottom:0;">
+          <label>Max Orders Per Month</label>
+          <input type="number" id="ddTarget" placeholder="4" step="1" onchange="saveDoorDashSettings()">
+        </div>
       </div>
     </div>
 
@@ -465,6 +476,7 @@ function initFirebase() {
 const CATEGORIES = ['Produce','Meat & Seafood','Dairy','Bakery','Pantry','Frozen','Beverages','Other'];
 const DEFAULT_CUISINES = ['American','Mexican','Italian','Asian','Mediterranean','Indian','Southern','Comfort Food','Salads & Light','Other'];
 function getCuisines() { return (data.cuisines && data.cuisines.length) ? data.cuisines : DEFAULT_CUISINES; }
+function ensureDD() { if(!data.doordash) data.doordash={}; if(!data.doordash.orders) data.doordash.orders=[]; if(!data.doordash.restaurants) data.doordash.restaurants=[]; if(!data.doordash.monthlyBudget&&data.doordash.monthlyBudget!==0) data.doordash.monthlyBudget=150; if(!data.doordash.monthlyTarget&&data.doordash.monthlyTarget!==0) data.doordash.monthlyTarget=4; return data.doordash; }
 let data = { recipes: [], mealPlan: {}, staples: [], checkedItems: {}, children: [], cuisines: [...DEFAULT_CUISINES], usageHistory: [], doordash: { orders: [], monthlyBudget: 150, monthlyTarget: 4 } };
 let familyCode = null;
 let currentWeekStart = getMonday(new Date());
@@ -1141,9 +1153,12 @@ function renderMealPlan() {
   const end=new Date(currentWeekStart); end.setDate(end.getDate()+6);
   document.getElementById('weekLabel').textContent=fmtDate(currentWeekStart)+' – '+fmtDate(end);
   const days=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-  const usedCuisines = [...new Set(data.recipes.map(r=>r.cuisine).filter(Boolean))].sort();
+  // Build unified cuisine list from recipes + DD restaurants
+  const recipeCuisines = data.recipes.map(r=>r.cuisine).filter(Boolean);
+  const ddRestCuisines = (ensureDD().restaurants||[]).map(r=>r.cuisine).filter(Boolean);
+  const allCuisines = [...new Set([...recipeCuisines,...ddRestCuisines])].sort();
   const standardIds = new Set(getStandards().map(r=>r.id));
-  if (standardIds.size) usedCuisines.unshift('★ Standards');
+  if (standardIds.size) allCuisines.unshift('★ Standards');
   let html='';
   for(let i=0;i<7;i++){
     const d=new Date(currentWeekStart);d.setDate(d.getDate()+i);const dk=dateKey(d);
@@ -1151,27 +1166,46 @@ function renderMealPlan() {
     const meals=data.mealPlan[dk]||[];
     const currentId=meals.length?meals[0].recipeId:'';
     const currentRecipe=currentId?data.recipes.find(r=>r.id===currentId):null;
-    let selectedCuisine = cuisineFilters[dk] !== undefined ? cuisineFilters[dk] : (currentRecipe ? (standardIds.has(currentRecipe.id) ? '★ Standards' : (currentRecipe.cuisine||'')) : '');
-    let filteredRecipes;
-    if (selectedCuisine === '★ Standards') filteredRecipes = data.recipes.filter(r=>standardIds.has(r.id));
-    else if (selectedCuisine) filteredRecipes = data.recipes.filter(r=>r.cuisine===selectedCuisine);
-    else filteredRecipes = data.recipes;
+    const order = ensureDD().orders.find(o=>o.date===dk);
+
+    // Infer cuisine from current selection
+    let selectedCuisine = cuisineFilters[dk] !== undefined ? cuisineFilters[dk] : '';
+    if (!selectedCuisine && mode==='cooking' && currentRecipe) selectedCuisine = standardIds.has(currentRecipe.id) ? '★ Standards' : (currentRecipe.cuisine||'');
+    if (!selectedCuisine && mode==='doordash' && order && order.restaurant) {
+      const rest = ensureDD().restaurants.find(r=>r.name===order.restaurant);
+      if (rest) selectedCuisine = rest.cuisine || '';
+    }
 
     html+=`<div class="day-card"><div class="day-header"><span>${days[i]}</span><span class="date">${fmtDate(d)}</span></div><div class="day-meal">`;
-    // Toggle: Cooking vs DoorDash
+    // Toggle
     html+=`<div class="meal-toggle"><button class="${mode==='cooking'?'active-cook':''}" onclick="setDayMode('${dk}','cooking')">🍳 Cooking</button><button class="${mode==='doordash'?'active-dd':''}" onclick="setDayMode('${dk}','doordash')">🛵 DoorDash</button></div>`;
+    // Cuisine filter (shared across both modes)
+    html+=`<select class="cuisine-select" onchange="filterCuisine('${dk}',this.value)"><option value="">Any cuisine</option>${allCuisines.map(c=>`<option ${c===selectedCuisine?'selected':''}>${esc(c)}</option>`).join('')}</select>`;
 
     if (mode === 'cooking') {
-      html+=`<select class="cuisine-select" onchange="filterCuisine('${dk}',this.value)"><option value="">Any cuisine</option>${usedCuisines.map(c=>`<option ${c===selectedCuisine?'selected':''}>${esc(c)}</option>`).join('')}</select>`;
+      let filteredRecipes;
+      if (selectedCuisine === '★ Standards') filteredRecipes = data.recipes.filter(r=>standardIds.has(r.id));
+      else if (selectedCuisine) filteredRecipes = data.recipes.filter(r=>r.cuisine===selectedCuisine);
+      else filteredRecipes = data.recipes;
       html+=`<select onchange="setMeal('${dk}',this.value)"><option value="">— pick a recipe —</option>${filteredRecipes.map(r=>`<option value="${r.id}" ${currentId===r.id?'selected':''}>${esc(r.name)}</option>`).join('')}</select>`;
     } else {
-      // DoorDash mode
-      const order = (data.doordash||{orders:[]}).orders.find(o=>o.date===dk);
-      if (order && order.restaurant && !order._editing) {
-        html+=`<div class="dd-logged"><span class="dd-restaurant">${esc(order.restaurant)}</span>${order.cost?' · <span class="dd-cost">$'+Number(order.cost).toFixed(2)+'</span>':''}</div>`;
+      // DoorDash mode — restaurant dropdown + cost/items
+      const ddRests = ensureDD().restaurants;
+      const filteredRests = selectedCuisine && selectedCuisine !== '★ Standards' ? ddRests.filter(r=>r.cuisine===selectedCuisine) : ddRests;
+      const currentRest = order ? order.restaurant : '';
+
+      if (order && currentRest && !order._editing) {
+        html+=`<div class="dd-logged"><span class="dd-restaurant">${esc(currentRest)}</span>${order.items?' · '+esc(order.items):''}${order.cost?' · <span class="dd-cost">$'+Number(order.cost).toFixed(2)+'</span>':''}</div>`;
         html+=`<button class="btn btn-sm btn-secondary" onclick="editDoorDash('${dk}')" style="font-size:12px;">Edit</button>`;
       } else {
-        html+=`<div class="dd-form"><input type="text" id="dd-rest-${dk}" placeholder="Restaurant name" value="${order?esc(order.restaurant||''):''}" onchange="saveDoorDash('${dk}')"><div class="dd-row"><input type="number" id="dd-cost-${dk}" placeholder="$ Total" step="0.01" value="${order&&order.cost?order.cost:''}" onchange="saveDoorDash('${dk}')"><input type="text" id="dd-what-${dk}" placeholder="What you got" value="${order?esc(order.items||''):''}" onchange="saveDoorDash('${dk}')"></div></div>`;
+        // Restaurant picker
+        html+=`<select onchange="setDDRestaurant('${dk}',this.value)"><option value="">— pick a restaurant —</option>${filteredRests.map(r=>`<option ${currentRest===r.name?'selected':''}>${esc(r.name)}</option>`).join('')}<option value="__custom__"${!currentRest||filteredRests.some(r=>r.name===currentRest)?'':' selected'}>Other...</option></select>`;
+        // If custom or editing, show text input
+        const isCustom = currentRest && !ddRests.some(r=>r.name===currentRest);
+        if (isCustom || (order && order._editing)) {
+          html+=`<input type="text" id="dd-rest-${dk}" placeholder="Restaurant name" value="${esc(currentRest)}" onchange="saveDoorDash('${dk}')" style="padding:7px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;">`;
+        }
+        html+=`<div class="dd-row"><input type="number" id="dd-cost-${dk}" placeholder="$ Total" step="0.01" value="${order&&order.cost?order.cost:''}" onchange="saveDoorDash('${dk}')"><input type="text" id="dd-what-${dk}" placeholder="What you got" value="${order?esc(order.items||''):''}" onchange="saveDoorDash('${dk}')"></div>`;
       }
     }
     html+=`</div></div>`;
@@ -1196,10 +1230,28 @@ function setDayMode(dk, mode) {
   persist(); renderMealPlan();
 }
 
+function setDDRestaurant(dk, value) {
+  const dd = ensureDD();
+  let order = dd.orders.find(o=>o.date===dk);
+  if(!order) { order={date:dk,restaurant:'',cost:null,items:''}; dd.orders.push(order); }
+  if (value === '__custom__') {
+    order.restaurant = '';
+    order._editing = true;
+    persist(); renderMealPlan();
+    return;
+  }
+  order.restaurant = value;
+  delete order._editing;
+  // Auto-set cuisine filter based on restaurant
+  const rest = dd.restaurants.find(r=>r.name===value);
+  if (rest && rest.cuisine) cuisineFilters[dk] = rest.cuisine;
+  persist(); renderMealPlan();
+}
+
 function saveDoorDash(dk) {
-  if(!data.doordash) data.doordash={orders:[],monthlyBudget:150,monthlyTarget:4};
-  let order = data.doordash.orders.find(o=>o.date===dk);
-  if(!order) { order={date:dk,restaurant:'',cost:null,items:''}; data.doordash.orders.push(order); }
+  const dd = ensureDD();
+  let order = dd.orders.find(o=>o.date===dk);
+  if(!order) { order={date:dk,restaurant:'',cost:null,items:''}; dd.orders.push(order); }
   const restEl = document.getElementById('dd-rest-'+dk);
   const costEl = document.getElementById('dd-cost-'+dk);
   const whatEl = document.getElementById('dd-what-'+dk);
@@ -1219,15 +1271,24 @@ function editDoorDash(dk) {
 }
 
 function filterCuisine(dk, cuisine) {
-  cuisineFilters[dk] = cuisine; // remember the user's choice
-  const meals = data.mealPlan[dk]||[];
-  const currentId = meals.length?meals[0].recipeId:'';
-  const currentRecipe = currentId?data.recipes.find(r=>r.id===currentId):null;
-  // If current recipe doesn't match new cuisine, clear it
-  if(currentRecipe && cuisine) {
-    const standardIds = new Set(getStandards().map(r=>r.id));
-    const matches = cuisine === '★ Standards' ? standardIds.has(currentRecipe.id) : currentRecipe.cuisine === cuisine;
-    if (!matches) { delete data.mealPlan[dk]; persist(); }
+  cuisineFilters[dk] = cuisine;
+  const mode = getDayMode(dk);
+  if (mode === 'cooking') {
+    const meals = data.mealPlan[dk]||[];
+    const currentId = meals.length?meals[0].recipeId:'';
+    const currentRecipe = currentId?data.recipes.find(r=>r.id===currentId):null;
+    if(currentRecipe && cuisine) {
+      const standardIds = new Set(getStandards().map(r=>r.id));
+      const matches = cuisine === '★ Standards' ? standardIds.has(currentRecipe.id) : currentRecipe.cuisine === cuisine;
+      if (!matches) { delete data.mealPlan[dk]; persist(); }
+    }
+  } else {
+    // DoorDash mode — clear restaurant if it doesn't match cuisine
+    const order = ensureDD().orders.find(o=>o.date===dk);
+    if (order && order.restaurant && cuisine) {
+      const rest = ensureDD().restaurants.find(r=>r.name===order.restaurant);
+      if (rest && rest.cuisine !== cuisine) { order.restaurant=''; order._editing=false; persist(); }
+    }
   }
   renderMealPlan();
 }
@@ -1333,17 +1394,55 @@ function exportCalendar() {
 // SETTINGS / SYNC
 // ===========================================================================
 function renderDoorDashSettings() {
-  const dd = data.doordash || { orders:[], monthlyBudget:150, monthlyTarget:4 };
+  const dd = ensureDD();
   document.getElementById('ddBudget').value = dd.monthlyBudget || '';
   document.getElementById('ddTarget').value = dd.monthlyTarget || '';
+  // Populate cuisine dropdown for new restaurant
+  const sel = document.getElementById('newDDRestCuisine');
+  sel.innerHTML = getCuisines().map(c=>`<option>${esc(c)}</option>`).join('');
+  // Render restaurant list
+  renderDDRestaurants();
+}
+
+function renderDDRestaurants() {
+  const dd = ensureDD();
+  const el = document.getElementById('ddRestaurantsList');
+  if (!dd.restaurants.length) { el.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">No restaurants yet.</p>'; return; }
+  el.innerHTML = dd.restaurants.map((r,i) => `<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+    <span style="flex:1;font-size:14px;">${esc(r.name)}</span>
+    <span style="font-size:12px;color:var(--accent);font-weight:600;">${esc(r.cuisine||'')}</span>
+    <button onclick="removeDDRestaurant(${i})" style="background:none;border:none;color:var(--red);font-size:18px;padding:4px 8px;line-height:1;" title="Remove">&times;</button>
+  </div>`).join('');
+}
+
+function addDDRestaurant() {
+  const nameEl = document.getElementById('newDDRestName');
+  const cuisineEl = document.getElementById('newDDRestCuisine');
+  const name = (nameEl.value||'').trim();
+  if (!name) return;
+  const dd = ensureDD();
+  if (dd.restaurants.some(r=>r.name.toLowerCase()===name.toLowerCase())) { toast('Already in your list'); return; }
+  dd.restaurants.push({ name, cuisine: cuisineEl.value });
+  dd.restaurants.sort((a,b)=>a.name.localeCompare(b.name));
+  nameEl.value = '';
+  persist(); renderDDRestaurants();
+  toast('Added '+name);
+}
+
+function removeDDRestaurant(i) {
+  const dd = ensureDD();
+  const name = dd.restaurants[i].name;
+  dd.restaurants.splice(i,1);
+  persist(); renderDDRestaurants();
+  toast('Removed '+name);
 }
 
 function saveDoorDashSettings() {
-  if(!data.doordash) data.doordash = { orders:[], monthlyBudget:150, monthlyTarget:4 };
+  const dd = ensureDD();
   const b = document.getElementById('ddBudget').value;
   const t = document.getElementById('ddTarget').value;
-  data.doordash.monthlyBudget = b ? parseFloat(b) : 0;
-  data.doordash.monthlyTarget = t ? parseInt(t) : 0;
+  dd.monthlyBudget = b ? parseFloat(b) : 0;
+  dd.monthlyTarget = t ? parseInt(t) : 0;
   persist();
   toast('Budget updated');
 }
