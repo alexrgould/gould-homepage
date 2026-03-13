@@ -159,6 +159,15 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
 .empty-state { text-align: center; padding: 40px 20px; color: var(--text-secondary); }
 .empty-state svg { width: 48px; height: 48px; margin-bottom: 12px; opacity: 0.4; }
 .empty-state p { font-size: 15px; }
+.cuisine-group { margin-bottom: 4px; }
+.cuisine-group-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer; user-select: none; }
+.cuisine-group-header:active { background: var(--surface-hover); }
+.cuisine-group-header h3 { font-size: 14px; font-weight: 600; margin: 0; }
+.cuisine-group-header .count { font-size: 12px; color: var(--text-secondary); }
+.cuisine-group-header .chevron { font-size: 14px; color: var(--text-secondary); transition: transform 0.2s; }
+.cuisine-group.open .chevron { transform: rotate(180deg); }
+.cuisine-group-body { display: none; padding: 4px 0 8px; }
+.cuisine-group.open .cuisine-group-body { display: block; }
 
 @media (min-width: 768px) {
   main { padding: 24px; }
@@ -426,6 +435,7 @@ function getCuisines() { return (data.cuisines && data.cuisines.length) ? data.c
 let data = { recipes: [], mealPlan: {}, staples: [], checkedItems: {}, children: [], cuisines: [...DEFAULT_CUISINES], usageHistory: [] };
 let familyCode = null;
 let currentWeekStart = getMonday(new Date());
+let cuisineFilters = {}; // tracks user's cuisine selection per day key
 let currentDetailId = null;
 let tipIndex = 0;
 let saveTimer = null;
@@ -687,6 +697,14 @@ function renderKids() {
 // ===========================================================================
 // RECIPES
 // ===========================================================================
+let openCuisineGroups = {}; // tracks which cuisine groups are expanded
+
+function toggleCuisineGroup(cuisine) {
+  openCuisineGroups[cuisine] = !openCuisineGroups[cuisine];
+  const el = document.getElementById('cg-' + cuisine.replace(/[^a-zA-Z0-9]/g,'_'));
+  if (el) el.classList.toggle('open', openCuisineGroups[cuisine]);
+}
+
 function renderRecipes() {
   const q = (document.getElementById('recipeSearch').value||'').toLowerCase();
   const list = data.recipes.filter(r => !q || r.name.toLowerCase().includes(q));
@@ -694,11 +712,48 @@ function renderRecipes() {
   if (!list.length) { el.innerHTML = `<div class="empty-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg><p>${q?'No matches':'No recipes yet. Tap + Add!'}</p></div>`; }
   else {
     const { counts } = getRecipeStats();
-    el.innerHTML = list.map(r => {
-      const c = counts[r.id]||0;
-      const badge = c >= 3 ? ' <span style="font-size:11px;background:var(--accent-light);color:var(--accent);padding:1px 6px;border-radius:4px;font-weight:600;">★ Standard</span>' : '';
-      return `<div class="card" onclick="showRecipeDetail('${r.id}')"><div class="card-title">${esc(r.name)}${badge}</div><div class="card-sub">${r.cuisine?esc(r.cuisine)+' · ':''}${r.ingredients.length} ingredient${r.ingredients.length!==1?'s':''}${c?' · made '+c+'x':''}</div></div>`;
-    }).join('');
+    // Group recipes by cuisine
+    const groups = {};
+    list.forEach(r => {
+      const cuisine = r.cuisine || 'Uncategorized';
+      if (!groups[cuisine]) groups[cuisine] = [];
+      groups[cuisine].push(r);
+    });
+    // Sort cuisine names, but put Uncategorized last
+    const cuisineKeys = Object.keys(groups).sort((a,b) => {
+      if (a === 'Uncategorized') return 1;
+      if (b === 'Uncategorized') return -1;
+      return a.localeCompare(b);
+    });
+
+    // If searching, show flat list (easier to scan results)
+    if (q) {
+      el.innerHTML = list.map(r => {
+        const c = counts[r.id]||0;
+        const badge = c >= 3 ? ' <span style="font-size:11px;background:var(--accent-light);color:var(--accent);padding:1px 6px;border-radius:4px;font-weight:600;">★ Standard</span>' : '';
+        return `<div class="card" onclick="showRecipeDetail('${r.id}')"><div class="card-title">${esc(r.name)}${badge}</div><div class="card-sub">${r.cuisine?esc(r.cuisine)+' · ':''}${r.ingredients.length} ingredient${r.ingredients.length!==1?'s':''}${c?' · made '+c+'x':''}</div></div>`;
+      }).join('');
+    } else {
+      // Grouped view with collapsible sections
+      el.innerHTML = cuisineKeys.map(cuisine => {
+        const recipes = groups[cuisine];
+        const safeId = cuisine.replace(/[^a-zA-Z0-9]/g,'_');
+        const isOpen = openCuisineGroups[cuisine] !== false; // default open
+        if (isOpen) openCuisineGroups[cuisine] = true;
+        const cards = recipes.map(r => {
+          const c = counts[r.id]||0;
+          const badge = c >= 3 ? ' <span style="font-size:11px;background:var(--accent-light);color:var(--accent);padding:1px 6px;border-radius:4px;font-weight:600;">★ Standard</span>' : '';
+          return `<div class="card" onclick="showRecipeDetail('${r.id}')"><div class="card-title">${esc(r.name)}${badge}</div><div class="card-sub">${r.ingredients.length} ingredient${r.ingredients.length!==1?'s':''}${c?' · made '+c+'x':''}</div></div>`;
+        }).join('');
+        return `<div id="cg-${safeId}" class="cuisine-group${isOpen?' open':''}">
+          <div class="cuisine-group-header" onclick="toggleCuisineGroup('${esc(cuisine)}')">
+            <h3>${esc(cuisine)}</h3>
+            <div style="display:flex;align-items:center;gap:8px;"><span class="count">${recipes.length} recipe${recipes.length!==1?'s':''}</span><span class="chevron">▼</span></div>
+          </div>
+          <div class="cuisine-group-body">${cards}</div>
+        </div>`;
+      }).join('');
+    }
   }
 
   // Discovery section (only show when not searching)
@@ -977,7 +1032,7 @@ function quickAddSuggestion(idx) {
 // ===========================================================================
 // MEAL PLAN
 // ===========================================================================
-function changeWeek(dir) { currentWeekStart=new Date(currentWeekStart); currentWeekStart.setDate(currentWeekStart.getDate()+dir*7); renderMealPlan(); }
+function changeWeek(dir) { currentWeekStart=new Date(currentWeekStart); currentWeekStart.setDate(currentWeekStart.getDate()+dir*7); cuisineFilters={}; renderMealPlan(); }
 
 function renderMealPlan() {
   const end=new Date(currentWeekStart); end.setDate(end.getDate()+6);
@@ -993,7 +1048,8 @@ function renderMealPlan() {
     const meals=data.mealPlan[dk]||[];
     const currentId=meals.length?meals[0].recipeId:'';
     const currentRecipe=currentId?data.recipes.find(r=>r.id===currentId):null;
-    const selectedCuisine = currentRecipe ? (standardIds.has(currentRecipe.id) ? '★ Standards' : (currentRecipe.cuisine||'')) : '';
+    // Use explicit user filter if set, otherwise infer from current recipe
+    let selectedCuisine = cuisineFilters[dk] !== undefined ? cuisineFilters[dk] : (currentRecipe ? (standardIds.has(currentRecipe.id) ? '★ Standards' : (currentRecipe.cuisine||'')) : '');
     // Filter recipes by selected cuisine
     let filteredRecipes;
     if (selectedCuisine === '★ Standards') filteredRecipes = data.recipes.filter(r=>standardIds.has(r.id));
@@ -1008,6 +1064,7 @@ function renderMealPlan() {
 }
 
 function filterCuisine(dk, cuisine) {
+  cuisineFilters[dk] = cuisine; // remember the user's choice
   const meals = data.mealPlan[dk]||[];
   const currentId = meals.length?meals[0].recipeId:'';
   const currentRecipe = currentId?data.recipes.find(r=>r.id===currentId):null;
