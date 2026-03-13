@@ -738,8 +738,7 @@ function renderRecipes() {
       el.innerHTML = cuisineKeys.map(cuisine => {
         const recipes = groups[cuisine];
         const safeId = cuisine.replace(/[^a-zA-Z0-9]/g,'_');
-        const isOpen = openCuisineGroups[cuisine] !== false; // default open
-        if (isOpen) openCuisineGroups[cuisine] = true;
+        const isOpen = openCuisineGroups[cuisine] === true; // default collapsed
         const cards = recipes.map(r => {
           const c = counts[r.id]||0;
           const badge = c >= 3 ? ' <span style="font-size:11px;background:var(--accent-light);color:var(--accent);padding:1px 6px;border-radius:4px;font-weight:600;">★ Standard</span>' : '';
