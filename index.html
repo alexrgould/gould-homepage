@@ -171,6 +171,15 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
 .dd-logged .dd-restaurant { font-weight: 600; }
 .dd-logged .dd-cost { color: #ff3008; font-weight: 600; }
 
+.consequence-active { display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid var(--border); }
+.consequence-active:last-child { border-bottom:none; }
+.consequence-days { min-width:44px; height:44px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:16px; color:white; flex-shrink:0; }
+.consequence-info { flex:1; min-width:0; }
+.consequence-info .cq-child { font-size:12px; font-weight:600; text-transform:uppercase; }
+.consequence-info .cq-desc { font-size:14px; font-weight:500; }
+.consequence-info .cq-dates { font-size:12px; color:var(--text-secondary); }
+.consequence-done-btn { background:none; border:1px solid var(--border); border-radius:6px; padding:4px 10px; font-size:12px; font-weight:600; color:var(--green); flex-shrink:0; }
+
 .cuisine-group { margin-bottom: 4px; }
 .cuisine-group-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer; user-select: none; }
 .cuisine-group-header:active { background: var(--surface-hover); }
@@ -247,6 +256,7 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
   <!-- HOME -->
   <div id="view-home" class="view active">
     <h1>Good evening!</h1>
+    <div id="homeConsequences" style="margin-bottom:16px;"></div>
     <div id="homeTip"></div>
     <div id="homeTonightCard" style="margin-bottom:16px;"></div>
     <div id="homeWeekSummary"></div>
@@ -477,7 +487,7 @@ const CATEGORIES = ['Produce','Meat & Seafood','Dairy','Bakery','Pantry','Frozen
 const DEFAULT_CUISINES = ['American','Mexican','Italian','Asian','Mediterranean','Indian','Southern','Comfort Food','Salads & Light','Other'];
 function getCuisines() { return (data.cuisines && data.cuisines.length) ? data.cuisines : DEFAULT_CUISINES; }
 function ensureDD() { if(!data.doordash) data.doordash={}; if(!data.doordash.orders) data.doordash.orders=[]; if(!data.doordash.restaurants) data.doordash.restaurants=[]; if(!data.doordash.monthlyBudget&&data.doordash.monthlyBudget!==0) data.doordash.monthlyBudget=150; if(!data.doordash.monthlyTarget&&data.doordash.monthlyTarget!==0) data.doordash.monthlyTarget=4; return data.doordash; }
-let data = { recipes: [], mealPlan: {}, staples: [], checkedItems: {}, children: [], cuisines: [...DEFAULT_CUISINES], usageHistory: [], doordash: { orders: [], monthlyBudget: 150, monthlyTarget: 4 } };
+let data = { recipes: [], mealPlan: {}, staples: [], checkedItems: {}, children: [], cuisines: [...DEFAULT_CUISINES], usageHistory: [], doordash: { orders: [], monthlyBudget: 150, monthlyTarget: 4 }, consequences: [] };
 let familyCode = null;
 let currentWeekStart = getMonday(new Date());
 let cuisineFilters = {}; // tracks user's cuisine selection per day key
@@ -519,6 +529,7 @@ async function saveToFirebase() {
       cuisines: data.cuisines || [...DEFAULT_CUISINES],
       usageHistory: data.usageHistory || [],
       doordash: data.doordash || { orders: [], monthlyBudget: 150, monthlyTarget: 4 },
+      consequences: data.consequences || [],
       updatedAt: firebase.firestore.FieldValue.serverTimestamp()
     });
   } catch(e) { console.log('Save failed:', e); }
@@ -532,8 +543,8 @@ function startListening() {
     if (!doc.exists) return;
     const remote = doc.data();
     // Only update if data actually changed (avoid echo from our own save)
-    const remoteStr = JSON.stringify({ r: remote.recipes, m: remote.mealPlan, s: remote.staples, c: remote.children, ci: remote.checkedItems, cu: remote.cuisines, uh: remote.usageHistory, dd: remote.doordash });
-    const localStr = JSON.stringify({ r: data.recipes, m: data.mealPlan, s: data.staples, c: data.children, ci: data.checkedItems, cu: data.cuisines, uh: data.usageHistory, dd: data.doordash });
+    const remoteStr = JSON.stringify({ r: remote.recipes, m: remote.mealPlan, s: remote.staples, c: remote.children, ci: remote.checkedItems, cu: remote.cuisines, uh: remote.usageHistory, dd: remote.doordash, cq: remote.consequences });
+    const localStr = JSON.stringify({ r: data.recipes, m: data.mealPlan, s: data.staples, c: data.children, ci: data.checkedItems, cu: data.cuisines, uh: data.usageHistory, dd: data.doordash, cq: data.consequences });
     if (remoteStr !== localStr) {
       data.recipes = remote.recipes || [];
       data.mealPlan = remote.mealPlan || {};
@@ -543,6 +554,7 @@ function startListening() {
       data.cuisines = remote.cuisines || [...DEFAULT_CUISINES];
       data.usageHistory = remote.usageHistory || [];
       data.doordash = remote.doordash || { orders: [], monthlyBudget: 150, monthlyTarget: 4 };
+      data.consequences = remote.consequences || [];
       persistLocal();
       refreshCurrentView();
     }
@@ -571,7 +583,7 @@ function showApp() {
 
 async function createFamily() {
   familyCode = document.getElementById('newFamilyCode').textContent;
-  data = { recipes: [], mealPlan: {}, staples: [], checkedItems: {}, children: [], cuisines: [...DEFAULT_CUISINES], usageHistory: [], doordash: { orders: [], monthlyBudget: 150, monthlyTarget: 4 } };
+  data = { recipes: [], mealPlan: {}, staples: [], checkedItems: {}, children: [], cuisines: [...DEFAULT_CUISINES], usageHistory: [], doordash: { orders: [], monthlyBudget: 150, monthlyTarget: 4 }, consequences: [] };
   persistLocal();
   if (firebaseReady) {
     await saveToFirebase();
@@ -600,6 +612,7 @@ async function joinFamily() {
         data.cuisines = remote.cuisines || [...DEFAULT_CUISINES];
         data.usageHistory = remote.usageHistory || [];
         data.doordash = remote.doordash || { orders: [], monthlyBudget: 150, monthlyTarget: 4 };
+        data.consequences = remote.consequences || [];
         persistLocal();
       }
     } catch(e) { console.log('Join fetch failed:', e); }
@@ -613,7 +626,7 @@ function leaveFamily() {
   if (!confirm('Disconnect from this family? Your data will stay on the server for your partner.')) return;
   if (unsubscribe) unsubscribe();
   familyCode = null;
-  data = { recipes: [], mealPlan: {}, staples: [], checkedItems: {}, children: [], cuisines: [...DEFAULT_CUISINES], usageHistory: [], doordash: { orders: [], monthlyBudget: 150, monthlyTarget: 4 } };
+  data = { recipes: [], mealPlan: {}, staples: [], checkedItems: {}, children: [], cuisines: [...DEFAULT_CUISINES], usageHistory: [], doordash: { orders: [], monthlyBudget: 150, monthlyTarget: 4 }, consequences: [] };
   localStorage.removeItem('mp_data');
   localStorage.removeItem('mp_family');
   showSetup();
@@ -638,6 +651,117 @@ function showView(name) {
 // ===========================================================================
 // HOME
 // ===========================================================================
+// ===========================================================================
+// CONSEQUENCES TRACKER
+// ===========================================================================
+function renderConsequences() {
+  const el = document.getElementById('homeConsequences');
+  if (!el) return;
+  const consequences = data.consequences || [];
+  const today = new Date(); today.setHours(0,0,0,0);
+
+  // Split into active and expired
+  const active = consequences.filter(c => {
+    if (c.resolved) return false;
+    const start = new Date(c.startDate+'T00:00:00');
+    const end = new Date(start); end.setDate(end.getDate() + c.days);
+    return today < end;
+  });
+
+  // Auto-resolve expired ones
+  consequences.forEach(c => {
+    if (c.resolved) return;
+    const start = new Date(c.startDate+'T00:00:00');
+    const end = new Date(start); end.setDate(end.getDate() + c.days);
+    if (today >= end) c.resolved = true;
+  });
+
+  // Get child names for the dropdown
+  const childNames = (data.children||[]).filter(c=>c.name).map(c=>c.name);
+
+  let html = '';
+
+  // Active consequences
+  if (active.length) {
+    html += `<div class="card" style="border-left:4px solid var(--red);">`;
+    html += `<div style="font-size:12px;font-weight:600;color:var(--red);text-transform:uppercase;margin-bottom:8px;">Active Consequences</div>`;
+    active.forEach(c => {
+      const start = new Date(c.startDate+'T00:00:00');
+      const end = new Date(start); end.setDate(end.getDate() + c.days);
+      const msLeft = end.getTime() - today.getTime();
+      const daysLeft = Math.ceil(msLeft / (24*60*60*1000));
+      const pct = Math.round(((c.days - daysLeft) / c.days) * 100);
+      const endLabel = end.toLocaleDateString('en-US',{month:'short',day:'numeric'});
+      const bgColor = daysLeft <= 1 ? 'var(--green)' : daysLeft <= 3 ? '#e6a817' : 'var(--red)';
+      html += `<div class="consequence-active">`;
+      html += `<div class="consequence-days" style="background:${bgColor};">${daysLeft}d</div>`;
+      html += `<div class="consequence-info"><div class="cq-child" style="color:${bgColor};">${esc(c.child||'')}</div><div class="cq-desc">${esc(c.description)}</div><div class="cq-dates">Ends ${endLabel}</div>`;
+      // Progress bar
+      html += `<div style="background:var(--border);border-radius:3px;height:4px;margin-top:4px;overflow:hidden;"><div style="width:${pct}%;height:100%;border-radius:3px;background:${bgColor};transition:width 0.3s;"></div></div>`;
+      html += `</div>`;
+      html += `<button class="consequence-done-btn" onclick="resolveConsequence('${c.id}')">End early</button>`;
+      html += `</div>`;
+    });
+    html += `</div>`;
+  }
+
+  // Add new consequence form (collapsible)
+  html += `<div class="card" style="margin-top:${active.length?'8':'0'}px;">`;
+  html += `<div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;" onclick="toggleConsequenceForm()">`;
+  html += `<span style="font-size:13px;font-weight:600;color:var(--text-secondary);">+ Add a consequence</span>`;
+  html += `<span id="cqFormChevron" style="font-size:12px;color:var(--text-secondary);transition:transform 0.2s;">▼</span>`;
+  html += `</div>`;
+  html += `<div id="cqForm" style="display:none;margin-top:10px;">`;
+  html += `<div class="form-group" style="margin-bottom:8px;"><label>Child</label><select id="cqChild" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:var(--radius);">${childNames.length?childNames.map(n=>`<option>${esc(n)}</option>`).join(''):'<option>Child 1</option><option>Child 2</option>'}</select></div>`;
+  html += `<div class="form-group" style="margin-bottom:8px;"><label>Consequence</label><input type="text" id="cqDesc" placeholder="No TV, no iPad, early bedtime..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:var(--radius);"></div>`;
+  html += `<div class="form-group" style="margin-bottom:10px;"><label>Duration (days)</label><div style="display:flex;gap:6px;align-items:center;">`;
+  // Quick day buttons
+  [1,2,3,5,7,14].forEach(d => {
+    html += `<button class="btn btn-sm btn-secondary" onclick="document.getElementById('cqDays').value=${d}" style="padding:4px 10px;font-size:13px;">${d}</button>`;
+  });
+  html += `<input type="number" id="cqDays" value="7" min="1" max="90" style="width:60px;padding:8px;border:1px solid var(--border);border-radius:var(--radius);text-align:center;">`;
+  html += `</div></div>`;
+  html += `<button class="btn btn-primary btn-block" onclick="addConsequence()">Start Consequence</button>`;
+  html += `</div></div>`;
+
+  el.innerHTML = html;
+}
+
+let cqFormOpen = false;
+function toggleConsequenceForm() {
+  cqFormOpen = !cqFormOpen;
+  const form = document.getElementById('cqForm');
+  const chevron = document.getElementById('cqFormChevron');
+  if (form) form.style.display = cqFormOpen ? 'block' : 'none';
+  if (chevron) chevron.style.transform = cqFormOpen ? 'rotate(180deg)' : '';
+}
+
+function addConsequence() {
+  const child = document.getElementById('cqChild').value;
+  const desc = (document.getElementById('cqDesc').value||'').trim();
+  const days = parseInt(document.getElementById('cqDays').value) || 7;
+  if (!desc) { toast('Enter a consequence'); return; }
+  if (!data.consequences) data.consequences = [];
+  data.consequences.push({
+    id: uid(),
+    child: child,
+    description: desc,
+    startDate: dateKey(new Date()),
+    days: days,
+    resolved: false
+  });
+  persist();
+  cqFormOpen = false;
+  renderConsequences();
+  toast(child + ': ' + desc + ' — ' + days + ' days');
+}
+
+function resolveConsequence(id) {
+  if (!confirm('End this consequence early?')) return;
+  const c = (data.consequences||[]).find(x=>x.id===id);
+  if (c) { c.resolved = true; persist(); renderConsequences(); toast('Consequence ended'); }
+}
+
 function renderDoorDashTracker() {
   const el = document.getElementById('homeDoorDash');
   const dd = data.doordash || { orders: [], monthlyBudget: 150, monthlyTarget: 4 };
@@ -689,6 +813,8 @@ function renderHome() {
   const h = new Date().getHours();
   document.querySelector('#view-home h1').textContent = h < 12 ? 'Good morning!' : h < 17 ? 'Good afternoon!' : 'Good evening!';
 
+  // Consequences tracker
+  renderConsequences();
   // DoorDash tracker
   renderDoorDashTracker();
 
@@ -1491,6 +1617,7 @@ if(!data.children) data.children=[];
 if(!data.checkedItems) data.checkedItems={};
 if(!data.usageHistory) data.usageHistory=[];
 if(!data.doordash) data.doordash={ orders:[], monthlyBudget:150, monthlyTarget:4 };
+if(!data.consequences) data.consequences=[];
 initFirebase();
 
 // Register service worker for PWA
