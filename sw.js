@@ -1,4 +1,4 @@
-const CACHE_NAME = 'meal-planner-v3';
+const CACHE_NAME = 'meal-planner-v4';
 const ASSETS = [
   './index.html',
   './manifest.json'
@@ -26,6 +26,8 @@ self.addEventListener('fetch', event => {
   // Don't cache Firebase or external API calls
   if (url.hostname.includes('firebase') ||
       url.hostname.includes('googleapis') ||
+      url.hostname.includes('google.com') ||
+      url.hostname.includes('gstatic') ||
       url.hostname.includes('allorigins')) {
     return;
   }
