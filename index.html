@@ -981,53 +981,62 @@ function renderCalendarSummary() {
   ];
   const tipIdx = Math.floor(new Date().getTime() / (1000*60*60*24*7)) % parentingTips.length;
 
-  const calOpen = window._calSectionOpen !== undefined ? window._calSectionOpen : false;
-  const chevron = calOpen ? '▾' : '▸';
-  const evtCount = thisWeekEvents.length + nextWeekEvents.length;
-  const previewText = evtCount === 0 ? 'No upcoming events' : `${evtCount} event${evtCount>1?'s':''} coming up`;
+  if (!window._calWeekOpen) window._calWeekOpen = {};
+  const twOpen = window._calWeekOpen.thisWeek || false;
+  const nwOpen = window._calWeekOpen.nextWeek || false;
+
+  function toggleCalSection(key) {
+    window._calWeekOpen[key] = !window._calWeekOpen[key];
+    renderCalendarSummary();
+  }
+  window._toggleCalSection = toggleCalSection;
 
   let html = '';
 
-  // COLLAPSED HEADER — always visible
-  html += `<div class="card" style="border-left:4px solid var(--blue);cursor:pointer;${calOpen ? 'margin-bottom:0;border-radius:var(--radius) var(--radius) 0 0;' : ''}" onclick="window._calSectionOpen=!window._calSectionOpen;renderCalendarSummary();">`;
-  html += `<div style="display:flex;justify-content:space-between;align-items:center;">`;
-  html += `<div style="display:flex;align-items:center;gap:8px;"><span style="font-size:14px;color:var(--blue);">${chevron}</span><div style="font-size:12px;font-weight:600;color:var(--blue);text-transform:uppercase;">📅 Calendar</div></div>`;
-  html += `<div style="display:flex;align-items:center;gap:8px;">`;
-  if (!calOpen) html += `<span style="font-size:12px;color:var(--text-secondary);">${previewText}</span>`;
+  // THIS WEEK CARD
+  html += `<div class="card" style="border-left:4px solid var(--blue);">`;
+  html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">`;
+  html += `<div style="font-size:12px;font-weight:600;color:var(--blue);text-transform:uppercase;">📅 This Week</div>`;
   html += `<button class="btn btn-sm btn-secondary" onclick="event.stopPropagation();fetchCalendarEvents();" style="font-size:11px;padding:2px 8px;">Refresh</button>`;
-  html += `</div></div>`;
+  html += `</div>`;
+  html += weekSummary(thisWeekEvents, false);
+  if (thisWeekEvents.length) {
+    const twChev = twOpen ? '▾' : '▸';
+    html += `<div onclick="window._toggleCalSection('thisWeek')" style="cursor:pointer;display:flex;align-items:center;gap:6px;padding:6px 0 2px;border-top:1px solid var(--border);margin-top:4px;">`;
+    html += `<span style="font-size:12px;color:var(--blue);">${twChev}</span>`;
+    html += `<span style="font-size:12px;font-weight:600;color:var(--blue);">${twOpen ? 'Hide' : 'Show'} ${thisWeekEvents.length} event${thisWeekEvents.length>1?'s':''}</span>`;
+    html += `</div>`;
+    if (twOpen) {
+      html += `<div style="margin-top:8px;">`;
+      html += renderEventList(groupByDay(thisWeekEvents));
+      html += `</div>`;
+    }
+  }
   html += `</div>`;
 
-  // EXPANDED CONTENT
-  if (calOpen) {
-    html += `<div style="background:var(--surface);border:1px solid var(--border);border-top:none;border-radius:0 0 var(--radius) var(--radius);box-shadow:var(--shadow);padding:12px;">`;
-
-    // THIS WEEK
-    html += `<div style="border-left:3px solid var(--blue);padding-left:12px;margin-bottom:14px;">`;
-    html += `<div style="font-size:12px;font-weight:600;color:var(--blue);text-transform:uppercase;margin-bottom:6px;">This Week</div>`;
-    html += weekSummary(thisWeekEvents, false);
-    if (thisWeekEvents.length) {
-      html += renderEventList(groupByDay(thisWeekEvents));
-    }
+  // NEXT WEEK CARD
+  html += `<div class="card" style="border-left:4px solid var(--purple);margin-top:12px;">`;
+  html += `<div style="font-size:12px;font-weight:600;color:var(--purple);text-transform:uppercase;margin-bottom:8px;">🗓️ Next Week</div>`;
+  html += weekSummary(nextWeekEvents, true);
+  if (nextWeekEvents.length) {
+    const nwChev = nwOpen ? '▾' : '▸';
+    html += `<div onclick="window._toggleCalSection('nextWeek')" style="cursor:pointer;display:flex;align-items:center;gap:6px;padding:6px 0 2px;border-top:1px solid var(--border);margin-top:4px;">`;
+    html += `<span style="font-size:12px;color:var(--purple);">${nwChev}</span>`;
+    html += `<span style="font-size:12px;font-weight:600;color:var(--purple);">${nwOpen ? 'Hide' : 'Show'} ${nextWeekEvents.length} event${nextWeekEvents.length>1?'s':''}</span>`;
     html += `</div>`;
-
-    // NEXT WEEK
-    html += `<div style="border-left:3px solid var(--purple);padding-left:12px;margin-bottom:14px;">`;
-    html += `<div style="font-size:12px;font-weight:600;color:var(--purple);text-transform:uppercase;margin-bottom:6px;">🗓️ Next Week</div>`;
-    html += weekSummary(nextWeekEvents, true);
-    if (nextWeekEvents.length) {
+    if (nwOpen) {
+      html += `<div style="margin-top:8px;">`;
       html += renderEventList(groupByDay(nextWeekEvents));
+      html += `</div>`;
     }
-    html += `</div>`;
-
-    // PARENTING TIP
-    html += `<div style="border-left:3px solid var(--green);padding-left:12px;">`;
-    html += `<div style="font-size:12px;font-weight:600;color:var(--green);text-transform:uppercase;margin-bottom:6px;">💡 Parenting Tip of the Week</div>`;
-    html += `<p style="font-size:13px;color:var(--text);line-height:1.5;">${esc(parentingTips[tipIdx])}</p>`;
-    html += `</div>`;
-
-    html += `</div>`;
   }
+  html += `</div>`;
+
+  // PARENTING TIP
+  html += `<div class="card" style="border-left:4px solid var(--green);margin-top:12px;">`;
+  html += `<div style="font-size:12px;font-weight:600;color:var(--green);text-transform:uppercase;margin-bottom:8px;">💡 Parenting Tip of the Week</div>`;
+  html += `<p style="font-size:13px;color:var(--text);line-height:1.5;">${esc(parentingTips[tipIdx])}</p>`;
+  html += `</div>`;
 
   el.innerHTML = html;
 }
