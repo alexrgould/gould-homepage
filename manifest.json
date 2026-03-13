@@ -1,7 +1,7 @@
 {
-  "name": "Meal Planner",
-  "short_name": "Meals",
-  "description": "Family dinner planner with grocery lists and parenting tips",
+  "name": "Gould Family Homepage",
+  "short_name": "Gould Home",
+  "description": "Family homepage with dinner planning, grocery lists, and more",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#faf8f5",
