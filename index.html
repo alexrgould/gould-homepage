@@ -885,13 +885,22 @@ function renderCalendarSummary() {
   nextSunday.setDate(nextMonday.getDate() + 6);
   nextSunday.setHours(23,59,59,999);
 
+  // Parse event date safely (all-day dates like "2025-03-12" must use local noon to avoid timezone shift)
+  function evLocalDate(ev) {
+    const s = ev.start;
+    if (ev.allDay || s.length === 10) {
+      const parts = s.split('-');
+      return new Date(+parts[0], +parts[1]-1, +parts[2], 0, 0, 0, 0);
+    }
+    const d = new Date(s); d.setHours(0,0,0,0); return d;
+  }
+
   // Split events into this week and next week
   const thisWeekEvents = [];
   const nextWeekEvents = [];
   gcalEvents.forEach(ev => {
-    const evDate = new Date(ev.start);
-    evDate.setHours(0,0,0,0);
-    if (evDate <= thisSunday) thisWeekEvents.push(ev);
+    const evDate = evLocalDate(ev);
+    if (evDate >= today && evDate <= thisSunday) thisWeekEvents.push(ev);
     else if (evDate >= nextMonday && evDate <= nextSunday) nextWeekEvents.push(ev);
   });
 
@@ -899,7 +908,7 @@ function renderCalendarSummary() {
   function groupByDay(events) {
     const groups = {};
     events.forEach(ev => {
-      const d = new Date(ev.start); d.setHours(0,0,0,0);
+      const d = evLocalDate(ev);
       const key = d.toISOString().split('T')[0];
       if (!groups[key]) groups[key] = [];
       groups[key].push(ev);
@@ -913,7 +922,8 @@ function renderCalendarSummary() {
     const sortedDays = Object.keys(dayGroups).sort();
     sortedDays.forEach(dayKey => {
       const events = dayGroups[dayKey];
-      const d = new Date(dayKey+'T12:00:00');
+      const parts = dayKey.split('-');
+      const d = new Date(+parts[0], +parts[1]-1, +parts[2]);
       const isToday = d.getTime() === today.getTime();
       const isTomorrow = d.getTime() === tomorrow.getTime();
       const dayLabel = isToday ? 'Today' : isTomorrow ? 'Tomorrow' : d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
@@ -939,7 +949,7 @@ function renderCalendarSummary() {
   // Generate week summary paragraph
   function weekSummary(events, isNextWeek) {
     const count = events.length;
-    const dayCount = new Set(events.map(ev => { const d = new Date(ev.start); d.setHours(0,0,0,0); return d.toISOString().split('T')[0]; })).size;
+    const dayCount = new Set(events.map(ev => evLocalDate(ev).toISOString().split('T')[0])).size;
     const titles = events.slice(0, 4).map(e => e.title);
     if (count === 0 && !isNextWeek) return `<p style="font-size:13px;color:var(--text-secondary);margin-bottom:10px;line-height:1.5;">Looks like a calm stretch ahead — no events on the calendar. A great chance to slow down, be present with the kids, and enjoy some unstructured family time.</p>`;
     if (count === 0 && isNextWeek) return `<p style="font-size:13px;color:var(--text-secondary);margin-bottom:10px;line-height:1.5;">Next week is wide open! Use the breathing room to plan something fun together — a family movie night, a new recipe, or just some extra time outdoors.</p>`;
