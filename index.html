@@ -39,7 +39,7 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
 nav { display: flex; background: var(--surface); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 100; padding: 0 4px; }
 nav button { flex: 1; padding: 10px 2px 8px; border: none; background: none; font-size: 10px; font-weight: 600; color: var(--text-secondary); display: flex; flex-direction: column; align-items: center; gap: 3px; border-bottom: 2px solid transparent; transition: color 0.15s; }
 nav button.active { color: var(--accent); border-bottom-color: var(--accent); }
-nav button svg { width: 20px; height: 20px; }
+nav button svg { width: 18px; height: 18px; }
 
 /* MAIN */
 main { flex: 1; padding: 16px; max-width: 600px; width: 100%; margin: 0 auto; }
@@ -221,6 +221,10 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/><path d="M3 6h18M16 10a4 4 0 01-8 0"/></svg>
     Grocery
   </button>
+  <button onclick="showView('staples')" id="nav-staples">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 14l2 2 4-4"/></svg>
+    Staples
+  </button>
   <button onclick="showView('sync')" id="nav-sync">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.32 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
     Settings
@@ -279,6 +283,16 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
     </div>
   </div>
 
+  <!-- STAPLES -->
+  <div id="view-staples" class="view">
+    <h1>Weekly Staples</h1>
+    <p style="font-size:14px; color:var(--text-secondary); margin-bottom:16px;">Items auto-added to your grocery list every week.</p>
+    <div class="card">
+      <div id="staplesList"></div>
+      <button class="btn btn-secondary btn-sm" onclick="addStapleRow()" style="margin-top:8px;">+ Add Item</button>
+    </div>
+  </div>
+
   <!-- SETTINGS -->
   <div id="view-sync" class="view">
     <h1>Settings</h1>
@@ -308,13 +322,6 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
           <input type="date" id="child2Bday" style="flex:1;" onchange="saveKids()">
         </div>
       </div>
-    </div>
-
-    <div class="card" style="margin-bottom:16px;">
-      <h3 style="margin-bottom:8px;">Weekly Staples</h3>
-      <p style="font-size:13px; color:var(--text-secondary); margin-bottom:10px;">Auto-added to your grocery list every week.</p>
-      <div id="staplesList"></div>
-      <button class="btn btn-secondary btn-sm" onclick="addStapleRow()" style="margin-top:8px;">+ Add Item</button>
     </div>
 
     <div class="card" style="margin-bottom:16px;">
@@ -583,7 +590,8 @@ function showView(name) {
   if (name === 'recipes') renderRecipes();
   if (name === 'plan') renderMealPlan();
   if (name === 'grocery') renderGrocery();
-  if (name === 'sync') { renderStaples(); renderCuisines(); renderSync(); renderKids(); }
+  if (name === 'staples') renderStaples();
+  if (name === 'sync') { renderCuisines(); renderSync(); renderKids(); }
 }
 
 // ===========================================================================
