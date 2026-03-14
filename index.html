@@ -166,6 +166,7 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
 .meal-toggle button { flex: 1; padding: 6px 4px; border: none; background: var(--surface); font-size: 12px; font-weight: 600; color: var(--text-secondary); cursor: pointer; transition: all 0.15s; }
 .meal-toggle button.active-cook { background: var(--green); color: white; }
 .meal-toggle button.active-dd { background: #ff3008; color: white; }
+.meal-toggle button.active-eo { background: var(--purple); color: white; }
 .dd-form { display: flex; flex-direction: column; gap: 4px; }
 .dd-form input { padding: 7px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; }
 .dd-form .dd-row { display: flex; gap: 4px; }
@@ -1225,7 +1226,12 @@ function renderHome() {
   const todayMeals = data.mealPlan[today] || [];
   const tonight = todayMeals.length ? data.recipes.find(r => r.id === todayMeals[0].recipeId) : null;
   const card = document.getElementById('homeTonightCard');
-  if (todayDD && todayDD.restaurant) {
+  const todayIsEO = todayDD && todayDD.mode === 'eatingout';
+  if (todayIsEO && todayDD.restaurant) {
+    card.innerHTML = `<div class="card" onclick="showView('plan')" style="border-left:4px solid var(--purple);"><div style="font-size:12px;font-weight:600;color:var(--purple);text-transform:uppercase;margin-bottom:4px;">Tonight's Dinner — Eating Out</div><div class="card-title">🍽️ ${esc(todayDD.restaurant)}</div><div class="card-sub">${todayDD.items?esc(todayDD.items):''}</div></div>`;
+  } else if (todayIsEO) {
+    card.innerHTML = `<div class="card" onclick="showView('plan')" style="border-left:4px solid var(--purple);"><div style="font-size:12px;font-weight:600;color:var(--purple);text-transform:uppercase;margin-bottom:4px;">Tonight's Dinner — Eating Out</div><div class="card-title">🍽️ Eating out tonight</div><div class="card-sub">Tap to add details</div></div>`;
+  } else if (todayDD && todayDD.restaurant) {
     card.innerHTML = `<div class="card" onclick="showView('plan')" style="border-left:4px solid #ff3008;"><div style="font-size:12px;font-weight:600;color:#ff3008;text-transform:uppercase;margin-bottom:4px;">Tonight's Dinner — DoorDash</div><div class="card-title">🛵 ${esc(todayDD.restaurant)}</div><div class="card-sub">${todayDD.items?esc(todayDD.items):''}${todayDD.cost?' · $'+Number(todayDD.cost).toFixed(2):''}</div></div>`;
   } else if (todayDD) {
     card.innerHTML = `<div class="card" onclick="showView('plan')" style="border-left:4px solid #ff3008;"><div style="font-size:12px;font-weight:600;color:#ff3008;text-transform:uppercase;margin-bottom:4px;">Tonight's Dinner — DoorDash</div><div class="card-title">🛵 DoorDash night</div><div class="card-sub">Tap to log your order</div></div>`;
@@ -1235,11 +1241,15 @@ function renderHome() {
       : `<div class="card" onclick="showView('plan')" style="border-left:4px solid var(--border);"><div style="font-size:12px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;margin-bottom:4px;">Tonight's Dinner</div><div class="card-title" style="color:var(--text-secondary);">Nothing planned</div><div class="card-sub">Tap to plan this week</div></div>`;
   }
 
-  let planned = 0, ddThisWeek = 0;
+  let planned = 0, ddThisWeek = 0, eoThisWeek = 0;
   const ddOrders = (data.doordash||{orders:[]}).orders;
-  for (let i = 0; i < 7; i++) { const d = new Date(currentWeekStart); d.setDate(d.getDate()+i); const dk=dateKey(d); if ((data.mealPlan[dk]||[]).length) planned++; if(ddOrders.find(o=>o.date===dk)) ddThisWeek++; }
-  const totalPlanned = planned + ddThisWeek;
-  document.getElementById('homeWeekSummary').innerHTML = `<div class="card" onclick="showView('plan')"><div class="card-title">${totalPlanned}/7 dinners planned</div><div class="card-sub">${planned} cooking${ddThisWeek?' · '+ddThisWeek+' DoorDash':''} · ${data.recipes.length} recipes in your book</div></div>`;
+  for (let i = 0; i < 7; i++) { const d = new Date(currentWeekStart); d.setDate(d.getDate()+i); const dk=dateKey(d); if ((data.mealPlan[dk]||[]).length) planned++; const wo=ddOrders.find(o=>o.date===dk); if(wo&&wo.mode==='eatingout') eoThisWeek++; else if(wo) ddThisWeek++; }
+  const totalPlanned = planned + ddThisWeek + eoThisWeek;
+  let subParts = [planned+' cooking'];
+  if (ddThisWeek) subParts.push(ddThisWeek+' DoorDash');
+  if (eoThisWeek) subParts.push(eoThisWeek+' eating out');
+  subParts.push(data.recipes.length+' recipes in your book');
+  document.getElementById('homeWeekSummary').innerHTML = `<div class="card" onclick="showView('plan')"><div class="card-title">${totalPlanned}/7 dinners planned</div><div class="card-sub">${subParts.join(' · ')}</div></div>`;
 
   renderTip();
 }
@@ -1512,15 +1522,38 @@ function openUrlImport() { document.getElementById('urlImportModal').classList.a
 function closeUrlImport() { document.getElementById('urlImportModal').classList.remove('open'); }
 function setImportStatus(msg,type) { const el=document.getElementById('importStatus'); el.textContent=msg; el.className='import-status'+(type?' '+type:''); }
 
+async function fetchViaProxy(url) {
+  const proxies = [
+    u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+    u => `https://corsproxy.io/?${encodeURIComponent(u)}`,
+    u => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`,
+    u => `https://everyorigin.jwvbremen.nl/api/get?url=${encodeURIComponent(u)}`,
+    u => `https://proxy.cors.sh/${u}`,
+  ];
+  let lastErr = null;
+  for (const mkUrl of proxies) {
+    try {
+      const resp = await fetch(mkUrl(url), {signal: AbortSignal.timeout(12000), headers: {'x-requested-with': 'XMLHttpRequest'}});
+      if (!resp.ok) { lastErr = new Error('HTTP '+resp.status); continue; }
+      const text = await resp.text();
+      // everyorigin wraps in JSON
+      if (mkUrl.toString().includes('everyorigin')) {
+        try { const j = JSON.parse(text); return j.html || j.contents || text; } catch(e) { return text; }
+      }
+      if (text && text.length > 200) return text;
+      lastErr = new Error('Empty response');
+    } catch(e) { lastErr = e; }
+  }
+  throw lastErr || new Error('All proxies failed');
+}
+
 async function importFromUrl() {
   const url = document.getElementById('importUrl').value.trim();
   if(!url){toast('Enter a URL');return;}
   setImportStatus('Fetching recipe...','loading');
   document.getElementById('importBtn').disabled=true;
   try {
-    const resp = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,{signal:AbortSignal.timeout(15000)});
-    if(!resp.ok) throw new Error('Could not fetch ('+resp.status+')');
-    const html = await resp.text();
+    const html = await fetchViaProxy(url);
     let recipe=null;
     const ldMatches = html.match(/<script[^>]*type\s*=\s*["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi);
     if(ldMatches) for(const match of ldMatches) {
@@ -1673,6 +1706,7 @@ function getDayMode(dk) {
   // Check if this day has a doordash order
   const dd = data.doordash || { orders: [] };
   const order = dd.orders.find(o => o.date === dk);
+  if (order && order.mode === 'eatingout') return 'eatingout';
   if (order) return 'doordash';
   return 'cooking';
 }
@@ -1706,9 +1740,11 @@ function renderMealPlan() {
 
     html+=`<div class="day-card"><div class="day-header"><span>${days[i]}</span><span class="date">${fmtDate(d)}</span></div><div class="day-meal">`;
     // Toggle
-    html+=`<div class="meal-toggle"><button class="${mode==='cooking'?'active-cook':''}" onclick="setDayMode('${dk}','cooking')">🍳 Cooking</button><button class="${mode==='doordash'?'active-dd':''}" onclick="setDayMode('${dk}','doordash')">🛵 DoorDash</button></div>`;
-    // Cuisine filter (shared across both modes)
-    html+=`<select class="cuisine-select" onchange="filterCuisine('${dk}',this.value)"><option value="">Any cuisine</option>${allCuisines.map(c=>`<option ${c===selectedCuisine?'selected':''}>${esc(c)}</option>`).join('')}</select>`;
+    html+=`<div class="meal-toggle"><button class="${mode==='cooking'?'active-cook':''}" onclick="setDayMode('${dk}','cooking')">🍳 Cooking</button><button class="${mode==='doordash'?'active-dd':''}" onclick="setDayMode('${dk}','doordash')">🛵 DoorDash</button><button class="${mode==='eatingout'?'active-eo':''}" onclick="setDayMode('${dk}','eatingout')">🍽️ Eating Out</button></div>`;
+    // Cuisine filter (for cooking and doordash modes)
+    if (mode !== 'eatingout') {
+      html+=`<select class="cuisine-select" onchange="filterCuisine('${dk}',this.value)"><option value="">Any cuisine</option>${allCuisines.map(c=>`<option ${c===selectedCuisine?'selected':''}>${esc(c)}</option>`).join('')}</select>`;
+    }
 
     if (mode === 'cooking') {
       let filteredRecipes;
@@ -1716,7 +1752,7 @@ function renderMealPlan() {
       else if (selectedCuisine) filteredRecipes = data.recipes.filter(r=>r.cuisine===selectedCuisine);
       else filteredRecipes = data.recipes;
       html+=`<select onchange="setMeal('${dk}',this.value)"><option value="">— pick a recipe —</option>${filteredRecipes.map(r=>`<option value="${r.id}" ${currentId===r.id?'selected':''}>${esc(r.name)}</option>`).join('')}</select>`;
-    } else {
+    } else if (mode === 'doordash') {
       // DoorDash mode — restaurant dropdown + cost/items
       const ddRests = ensureDD().restaurants;
       const filteredRests = selectedCuisine && selectedCuisine !== '★ Standards' ? ddRests.filter(r=>r.cuisine===selectedCuisine) : ddRests;
@@ -1735,6 +1771,16 @@ function renderMealPlan() {
         }
         html+=`<div class="dd-row"><input type="number" id="dd-cost-${dk}" placeholder="$ Total" step="0.01" value="${order&&order.cost?order.cost:''}" onchange="saveDoorDash('${dk}')"><input type="text" id="dd-what-${dk}" placeholder="What you got" value="${order?esc(order.items||''):''}" onchange="saveDoorDash('${dk}')"></div>`;
       }
+    } else {
+      // Eating Out mode — restaurant name + optional notes
+      const currentRest = order ? order.restaurant : '';
+      if (order && currentRest && !order._editing) {
+        html+=`<div class="dd-logged"><span class="dd-restaurant">${esc(currentRest)}</span>${order.items?' · '+esc(order.items):''}</div>`;
+        html+=`<button class="btn btn-sm btn-secondary" onclick="editDoorDash('${dk}')" style="font-size:12px;">Edit</button>`;
+      } else {
+        html+=`<input type="text" id="eo-rest-${dk}" placeholder="Where are you eating?" value="${esc(currentRest)}" onchange="saveEatingOut('${dk}')" style="padding:7px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;width:100%;">`;
+        html+=`<input type="text" id="eo-what-${dk}" placeholder="Notes (optional)" value="${order?esc(order.items||''):''}" onchange="saveEatingOut('${dk}')" style="padding:7px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;width:100%;margin-top:6px;">`;
+      }
     }
     html+=`</div></div>`;
   }
@@ -1743,14 +1789,20 @@ function renderMealPlan() {
 
 function setDayMode(dk, mode) {
   if (mode === 'doordash') {
-    // Clear any recipe for this day and create a blank DD order
     delete data.mealPlan[dk];
     if(!data.doordash) data.doordash={orders:[],monthlyBudget:150,monthlyTarget:4};
-    if(!data.doordash.orders.find(o=>o.date===dk)) {
-      data.doordash.orders.push({date:dk, restaurant:'', cost:null, items:''});
-    }
+    // Remove existing order for this day then add fresh
+    if(data.doordash.orders) data.doordash.orders = data.doordash.orders.filter(o=>o.date!==dk);
+    else data.doordash.orders = [];
+    data.doordash.orders.push({date:dk, restaurant:'', cost:null, items:''});
+  } else if (mode === 'eatingout') {
+    delete data.mealPlan[dk];
+    if(!data.doordash) data.doordash={orders:[],monthlyBudget:150,monthlyTarget:4};
+    if(data.doordash.orders) data.doordash.orders = data.doordash.orders.filter(o=>o.date!==dk);
+    else data.doordash.orders = [];
+    data.doordash.orders.push({date:dk, restaurant:'', cost:null, items:'', mode:'eatingout'});
   } else {
-    // Switch back to cooking — remove DD order for this day
+    // Switch back to cooking — remove DD/EO order for this day
     if(data.doordash && data.doordash.orders) {
       data.doordash.orders = data.doordash.orders.filter(o=>o.date!==dk);
     }
@@ -1790,6 +1842,19 @@ function saveDoorDash(dk) {
   persist();
 }
 
+function saveEatingOut(dk) {
+  const dd = ensureDD();
+  let order = dd.orders.find(o=>o.date===dk);
+  if(!order) { order={date:dk,restaurant:'',cost:null,items:'',mode:'eatingout'}; dd.orders.push(order); }
+  const restEl = document.getElementById('eo-rest-'+dk);
+  const whatEl = document.getElementById('eo-what-'+dk);
+  if(restEl) order.restaurant = restEl.value;
+  if(whatEl) order.items = whatEl.value;
+  order.mode = 'eatingout';
+  delete order._editing;
+  persist();
+}
+
 function editDoorDash(dk) {
   // Re-render to show the form instead of the summary
   if(!data.doordash) return;
@@ -1810,7 +1875,7 @@ function filterCuisine(dk, cuisine) {
       const matches = cuisine === '★ Standards' ? standardIds.has(currentRecipe.id) : currentRecipe.cuisine === cuisine;
       if (!matches) { delete data.mealPlan[dk]; persist(); }
     }
-  } else {
+  } else if (mode === 'doordash') {
     // DoorDash mode — clear restaurant if it doesn't match cuisine
     const order = ensureDD().orders.find(o=>o.date===dk);
     if (order && order.restaurant && cuisine) {
@@ -1835,7 +1900,7 @@ function setMeal(dk,recipeId) {
 // ===========================================================================
 function getGroceryItems() {
   const items={};
-  const ddDates = new Set((data.doordash||{orders:[]}).orders.map(o=>o.date));
+  const ddDates = new Set((data.doordash||{orders:[]}).orders.map(o=>o.date)); // excludes both DD and eating out days
   for(let i=0;i<7;i++){const d=new Date(currentWeekStart);d.setDate(d.getDate()+i);const dk=dateKey(d);if(ddDates.has(dk))continue;(data.mealPlan[dk]||[]).forEach(m=>{const r=data.recipes.find(x=>x.id===m.recipeId);if(!r)return;r.ingredients.forEach(ing=>{const key=ing.name.toLowerCase();if(!items[key])items[key]={name:ing.name,quantities:[],category:ing.category};if(ing.quantity)items[key].quantities.push(ing.quantity);});});}
   (data.staples||[]).forEach(s=>{if(!s.name)return;const key=s.name.toLowerCase();if(!items[key])items[key]={name:s.name,quantities:[],category:s.category||'Other'};if(s.quantity)items[key].quantities.push(s.quantity+' (staple)');});
   return items;
