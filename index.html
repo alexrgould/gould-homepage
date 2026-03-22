@@ -308,9 +308,17 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
 
   <!-- GROCERY -->
   <div id="view-grocery" class="view">
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
       <h1>Grocery List</h1>
       <button class="btn btn-sm btn-secondary" onclick="uncheckAll()">Reset</button>
+    </div>
+    <div style="display:flex;gap:6px;margin-bottom:16px;">
+      <input type="text" id="groceryAddName" placeholder="Add an item..." style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;" onkeydown="if(event.key==='Enter')addGroceryExtra()">
+      <select id="groceryAddCat" style="padding:8px 6px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;max-width:120px;">
+        <option value="Other">Category</option>
+        <option>Produce</option><option>Meat &amp; Seafood</option><option>Dairy</option><option>Bakery</option><option>Pantry</option><option>Frozen</option><option>Beverages</option><option>Other</option>
+      </select>
+      <button class="btn btn-primary" onclick="addGroceryExtra()" style="padding:8px 12px;white-space:nowrap;">Add</button>
     </div>
     <div id="groceryContent"></div>
     <div class="btn-row" style="margin-top:16px;">
@@ -512,7 +520,7 @@ const CATEGORIES = ['Produce','Meat & Seafood','Dairy','Bakery','Pantry','Frozen
 const DEFAULT_CUISINES = ['American','Mexican','Italian','Asian','Mediterranean','Indian','Southern','Comfort Food','Salads & Light','Other'];
 function getCuisines() { return (data.cuisines && data.cuisines.length) ? data.cuisines : DEFAULT_CUISINES; }
 function ensureDD() { if(!data.doordash) data.doordash={}; if(!data.doordash.orders) data.doordash.orders=[]; if(!data.doordash.restaurants) data.doordash.restaurants=[]; if(!data.doordash.monthlyBudget&&data.doordash.monthlyBudget!==0) data.doordash.monthlyBudget=150; if(!data.doordash.monthlyTarget&&data.doordash.monthlyTarget!==0) data.doordash.monthlyTarget=4; return data.doordash; }
-let data = { recipes: [], mealPlan: {}, staples: [], checkedItems: {}, children: [], cuisines: [...DEFAULT_CUISINES], usageHistory: [], doordash: { orders: [], monthlyBudget: 150, monthlyTarget: 4 }, consequences: [] };
+let data = { recipes: [], mealPlan: {}, staples: [], checkedItems: {}, children: [], cuisines: [...DEFAULT_CUISINES], usageHistory: [], doordash: { orders: [], monthlyBudget: 150, monthlyTarget: 4 }, consequences: [], groceryExtras: [] };
 let familyCode = null;
 let currentWeekStart = getMonday(new Date());
 let cuisineFilters = {}; // tracks user's cuisine selection per day key
@@ -555,6 +563,7 @@ async function saveToFirebase() {
       usageHistory: data.usageHistory || [],
       doordash: data.doordash || { orders: [], monthlyBudget: 150, monthlyTarget: 4 },
       consequences: data.consequences || [],
+      groceryExtras: data.groceryExtras || [],
       updatedAt: firebase.firestore.FieldValue.serverTimestamp()
     });
   } catch(e) { console.log('Save failed:', e); }
@@ -568,8 +577,8 @@ function startListening() {
     if (!doc.exists) return;
     const remote = doc.data();
     // Only update if data actually changed (avoid echo from our own save)
-    const remoteStr = JSON.stringify({ r: remote.recipes, m: remote.mealPlan, s: remote.staples, c: remote.children, ci: remote.checkedItems, cu: remote.cuisines, uh: remote.usageHistory, dd: remote.doordash, cq: remote.consequences });
-    const localStr = JSON.stringify({ r: data.recipes, m: data.mealPlan, s: data.staples, c: data.children, ci: data.checkedItems, cu: data.cuisines, uh: data.usageHistory, dd: data.doordash, cq: data.consequences });
+    const remoteStr = JSON.stringify({ r: remote.recipes, m: remote.mealPlan, s: remote.staples, c: remote.children, ci: remote.checkedItems, cu: remote.cuisines, uh: remote.usageHistory, dd: remote.doordash, cq: remote.consequences, ge: remote.groceryExtras });
+    const localStr = JSON.stringify({ r: data.recipes, m: data.mealPlan, s: data.staples, c: data.children, ci: data.checkedItems, cu: data.cuisines, uh: data.usageHistory, dd: data.doordash, cq: data.consequences, ge: data.groceryExtras });
     if (remoteStr !== localStr) {
       data.recipes = remote.recipes || [];
       data.mealPlan = remote.mealPlan || {};
@@ -580,6 +589,7 @@ function startListening() {
       data.usageHistory = remote.usageHistory || [];
       data.doordash = remote.doordash || { orders: [], monthlyBudget: 150, monthlyTarget: 4 };
       data.consequences = remote.consequences || [];
+      data.groceryExtras = remote.groceryExtras || [];
       persistLocal();
       refreshCurrentView();
     }
@@ -608,7 +618,7 @@ function showApp() {
 
 async function createFamily() {
   familyCode = document.getElementById('newFamilyCode').textContent;
-  data = { recipes: [], mealPlan: {}, staples: [], checkedItems: {}, children: [], cuisines: [...DEFAULT_CUISINES], usageHistory: [], doordash: { orders: [], monthlyBudget: 150, monthlyTarget: 4 }, consequences: [] };
+  data = { recipes: [], mealPlan: {}, staples: [], checkedItems: {}, children: [], cuisines: [...DEFAULT_CUISINES], usageHistory: [], doordash: { orders: [], monthlyBudget: 150, monthlyTarget: 4 }, consequences: [], groceryExtras: [] };
   persistLocal();
   if (firebaseReady) {
     await saveToFirebase();
@@ -638,6 +648,7 @@ async function joinFamily() {
         data.usageHistory = remote.usageHistory || [];
         data.doordash = remote.doordash || { orders: [], monthlyBudget: 150, monthlyTarget: 4 };
         data.consequences = remote.consequences || [];
+        data.groceryExtras = remote.groceryExtras || [];
         persistLocal();
       }
     } catch(e) { console.log('Join fetch failed:', e); }
@@ -651,7 +662,7 @@ function leaveFamily() {
   if (!confirm('Disconnect from this family? Your data will stay on the server for your partner.')) return;
   if (unsubscribe) unsubscribe();
   familyCode = null;
-  data = { recipes: [], mealPlan: {}, staples: [], checkedItems: {}, children: [], cuisines: [...DEFAULT_CUISINES], usageHistory: [], doordash: { orders: [], monthlyBudget: 150, monthlyTarget: 4 }, consequences: [] };
+  data = { recipes: [], mealPlan: {}, staples: [], checkedItems: {}, children: [], cuisines: [...DEFAULT_CUISINES], usageHistory: [], doordash: { orders: [], monthlyBudget: 150, monthlyTarget: 4 }, consequences: [], groceryExtras: [] };
   localStorage.removeItem('mp_data');
   localStorage.removeItem('mp_family');
   showSetup();
@@ -689,6 +700,8 @@ let gcalTokenClient = null;
 let gapiInited = false;
 let gisInited = false;
 
+let gcalHasConsented = !!localStorage.getItem('gcal_consented');
+
 function initGapi() {
   gapi.load('client', async () => {
     await gapi.client.init({});
@@ -703,8 +716,14 @@ function initGapi() {
           gapi.client.setToken({ access_token: gcalToken });
           fetchCalendarList();
           fetchCalendarEvents();
+        } else if (gcalHasConsented && gisInited) {
+          // Token expired but user previously consented — silently refresh
+          silentTokenRefresh();
         } else { localStorage.removeItem('gcal_token'); }
       } catch(e) { localStorage.removeItem('gcal_token'); }
+    } else if (gcalHasConsented && gisInited) {
+      // No stored token but user previously connected — try silent refresh
+      silentTokenRefresh();
     }
     updateCalendarSettingsUI();
   });
@@ -719,6 +738,8 @@ function initGis() {
       gcalToken = response.access_token;
       const expiresAt = Date.now() + (response.expires_in * 1000);
       localStorage.setItem('gcal_token', JSON.stringify({ access_token: gcalToken, expires_at: expiresAt }));
+      localStorage.setItem('gcal_consented', '1');
+      gcalHasConsented = true;
       fetchCalendarList();
       fetchCalendarEvents();
       updateCalendarSettingsUI();
@@ -726,6 +747,15 @@ function initGis() {
     }
   });
   gisInited = true;
+  // If gapi was ready first and found an expired token, try silent refresh now
+  if (gapiInited && gcalHasConsented && !gcalToken) silentTokenRefresh();
+}
+
+function silentTokenRefresh() {
+  if (!gisInited || !gcalTokenClient) return;
+  try {
+    gcalTokenClient.requestAccessToken({ prompt: '' });
+  } catch(e) { console.log('Silent token refresh failed:', e); }
 }
 
 function maybeInitGcal() {
@@ -738,9 +768,23 @@ let gcalInitTimer = setInterval(() => {
 }, 500);
 setTimeout(() => clearInterval(gcalInitTimer), 15000);
 
+// Auto-refresh token before it expires (refresh 5 min early)
+setInterval(() => {
+  if (!gcalHasConsented || !gisInited || !gapiInited) return;
+  const stored = localStorage.getItem('gcal_token');
+  if (!stored) return;
+  try {
+    const parsed = JSON.parse(stored);
+    const fiveMin = 5 * 60 * 1000;
+    if (parsed.expires_at && parsed.expires_at - Date.now() < fiveMin) {
+      silentTokenRefresh();
+    }
+  } catch(e) {}
+}, 60000);
+
 function connectGoogleCalendar() {
   if (!gisInited) { toast('Google services still loading, try again in a moment'); return; }
-  gcalTokenClient.requestAccessToken({ prompt: gcalToken ? '' : 'consent' });
+  gcalTokenClient.requestAccessToken({ prompt: gcalHasConsented ? '' : 'consent' });
 }
 
 function disconnectGoogleCalendar() {
@@ -752,6 +796,8 @@ function disconnectGoogleCalendar() {
   gcalCalendars = [];
   localStorage.removeItem('gcal_token');
   localStorage.removeItem('gcal_selected_id');
+  localStorage.removeItem('gcal_consented');
+  gcalHasConsented = false;
   gcalSelectedId = 'primary';
   gapi.client.setToken(null);
   updateCalendarSettingsUI();
@@ -831,7 +877,12 @@ async function fetchCalendarEvents() {
     renderCalendarSummary();
   } catch(e) {
     console.log('GCal fetch error:', e);
-    if (e.status === 401) {
+    if (e.status === 401 && gcalHasConsented) {
+      // Token expired — try silent refresh
+      gcalToken = null;
+      localStorage.removeItem('gcal_token');
+      silentTokenRefresh();
+    } else if (e.status === 401) {
       localStorage.removeItem('gcal_token');
       gcalToken = null;
       updateCalendarSettingsUI();
@@ -1903,6 +1954,7 @@ function getGroceryItems() {
   const ddDates = new Set((data.doordash||{orders:[]}).orders.map(o=>o.date)); // excludes both DD and eating out days
   for(let i=0;i<7;i++){const d=new Date(currentWeekStart);d.setDate(d.getDate()+i);const dk=dateKey(d);if(ddDates.has(dk))continue;(data.mealPlan[dk]||[]).forEach(m=>{const r=data.recipes.find(x=>x.id===m.recipeId);if(!r)return;r.ingredients.forEach(ing=>{const key=ing.name.toLowerCase();if(!items[key])items[key]={name:ing.name,quantities:[],category:ing.category};if(ing.quantity)items[key].quantities.push(ing.quantity);});});}
   (data.staples||[]).forEach(s=>{if(!s.name)return;const key=s.name.toLowerCase();if(!items[key])items[key]={name:s.name,quantities:[],category:s.category||'Other'};if(s.quantity)items[key].quantities.push(s.quantity+' (staple)');});
+  (data.groceryExtras||[]).forEach(x=>{if(!x.name)return;const key=x.name.toLowerCase();if(!items[key])items[key]={name:x.name,quantities:[],category:x.category||'Other',isExtra:true};if(x.quantity)items[key].quantities.push(x.quantity);else items[key].isExtra=true;});
   return items;
 }
 
@@ -1912,7 +1964,7 @@ function renderGrocery() {
   const el=document.getElementById('groceryContent');
   if(!Object.keys(byCategory).length){el.innerHTML='<div class="empty-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/><path d="M3 6h18M16 10a4 4 0 01-8 0"/></svg><p>Plan some dinners first!</p></div>';return;}
   let html='';
-  CATEGORIES.forEach(cat=>{const ci=byCategory[cat];if(!ci||!ci.length)return;ci.sort((a,b)=>a.name.localeCompare(b.name));html+=`<div class="grocery-category"><h3>${cat}</h3>`;ci.forEach(item=>{const key=item.name.toLowerCase();const checked=data.checkedItems[key]?'checked':'';html+=`<div class="grocery-item ${checked}" data-key="${esc(key)}" onclick="toggleCheck(this,'${esc(key)}')"><input type="checkbox" ${checked}><span class="item-name">${esc(item.name)}</span><span class="item-qty">${esc(item.quantities.join(', '))}</span></div>`;});html+='</div>';});
+  CATEGORIES.forEach(cat=>{const ci=byCategory[cat];if(!ci||!ci.length)return;ci.sort((a,b)=>a.name.localeCompare(b.name));html+=`<div class="grocery-category"><h3>${cat}</h3>`;ci.forEach(item=>{const key=item.name.toLowerCase();const checked=data.checkedItems[key]?'checked':'';html+=`<div class="grocery-item ${checked}" data-key="${esc(key)}" onclick="toggleCheck(this,'${esc(key)}')"><input type="checkbox" ${checked}><span class="item-name">${esc(item.name)}</span><span class="item-qty">${esc(item.quantities.join(', '))}</span>${item.isExtra?`<button onclick="event.stopPropagation();removeGroceryExtra('${esc(key)}')" style="margin-left:auto;background:none;border:none;color:var(--red);font-size:16px;padding:2px 6px;flex-shrink:0;">✕</button>`:''}</div>`;});html+='</div>';});
   el.innerHTML=html;
 }
 
@@ -1928,6 +1980,28 @@ function toggleCheck(el, key) {
     if (cb) cb.checked = false;
   }
   persist();
+}
+function addGroceryExtra() {
+  const nameEl = document.getElementById('groceryAddName');
+  const catEl = document.getElementById('groceryAddCat');
+  const name = nameEl.value.trim();
+  if (!name) { nameEl.focus(); return; }
+  if (!data.groceryExtras) data.groceryExtras = [];
+  // Avoid duplicates
+  if (!data.groceryExtras.find(x => x.name.toLowerCase() === name.toLowerCase())) {
+    data.groceryExtras.push({ name, category: catEl.value || 'Other' });
+    persist();
+  }
+  nameEl.value = '';
+  catEl.value = 'Other';
+  renderGrocery();
+  toast('Added ' + name);
+}
+function removeGroceryExtra(key) {
+  if (!data.groceryExtras) return;
+  data.groceryExtras = data.groceryExtras.filter(x => x.name.toLowerCase() !== key);
+  delete data.checkedItems[key];
+  persist(); renderGrocery();
 }
 function uncheckAll() { data.checkedItems={}; persist(); renderGrocery(); toast('Reset'); }
 
@@ -2097,6 +2171,7 @@ if(!data.checkedItems) data.checkedItems={};
 if(!data.usageHistory) data.usageHistory=[];
 if(!data.doordash) data.doordash={ orders:[], monthlyBudget:150, monthlyTarget:4 };
 if(!data.consequences) data.consequences=[];
+if(!data.groceryExtras) data.groceryExtras=[];
 initFirebase();
 
 // Register service worker for PWA
