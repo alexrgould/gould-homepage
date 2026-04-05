@@ -1568,7 +1568,7 @@ function showRecipeDetail(id) {
   document.getElementById('recipeDetailModal').classList.add('open');
 
   // If we have cached nutrition, show it
-  if (r._nutrition) renderNutritionLabel(r._nutrition, r._nutritionMatched, r.ingredients.length);
+  if (r._nutrition) renderNutritionLabel(r._nutrition, r._nutritionMatched, r.ingredients.length, r._nutritionMissed);
 }
 
 function closeDetailModal() { document.getElementById('recipeDetailModal').classList.remove('open'); }
@@ -1577,6 +1577,58 @@ function editFromDetail() { closeDetailModal(); openRecipeModal(currentDetailId)
 // ===========================================================================
 // NUTRITION
 // ===========================================================================
+// Clean ingredient name for better USDA search matching
+function cleanIngredientName(name) {
+  let n = name.toLowerCase();
+  // Remove quantities/sizes that sometimes end up in the name
+  n = n.replace(/\b\d+[\.\d]*\s*(oz|ounce|lb|pound|g|gram|ml|can|jar|package|pkg|bag|box|bunch|head|clove|stalk|sprig|slice|piece)s?\b/gi, '');
+  // Remove prep descriptions
+  const removeWords = ['diced','chopped','minced','sliced','crushed','ground','shredded','grated',
+    'fresh','frozen','canned','dried','raw','cooked','boneless','skinless','skin-on','bone-in',
+    'thin','thick','finely','roughly','coarsely','to taste','optional','divided','packed',
+    'rinsed','drained','peeled','deveined','trimmed','cubed','halved','quartered','melted',
+    'softened','room temperature','cold','warm','hot','large','medium','small','extra',
+    'low-sodium','reduced-fat','fat-free','whole','organic','unsalted','salted','plain',
+    'all-purpose','self-rising','unbleached','about','approximately'];
+  removeWords.forEach(w => { n = n.replace(new RegExp('\\b'+w.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\b','gi'), ''); });
+  // Remove parenthetical notes
+  n = n.replace(/\([^)]*\)/g, '');
+  // Clean up whitespace and punctuation
+  n = n.replace(/[,;:]/g, ' ').replace(/\s+/g, ' ').trim();
+  return n;
+}
+
+// Try progressively simpler searches until we get a match
+async function searchUSDA(apiKey, originalName) {
+  const cleaned = cleanIngredientName(originalName);
+  // Build search variants: full cleaned name, then fewer words
+  const variants = [cleaned];
+  const words = cleaned.split(' ').filter(w => w.length > 1);
+  if (words.length > 2) variants.push(words.slice(0, 3).join(' '));
+  if (words.length > 1) variants.push(words.slice(0, 2).join(' '));
+  if (words.length > 0) variants.push(words[0]);
+
+  for (const query of variants) {
+    if (!query) continue;
+    // Try broader data types: Survey (FNDDS), SR Legacy, Foundation
+    const resp = await fetch(`https://api.nal.usda.gov/fdc/v1/foods/search?api_key=${encodeURIComponent(apiKey)}&query=${encodeURIComponent(query)}&pageSize=3&dataType=Survey%20(FNDDS),SR%20Legacy,Foundation`, {
+      signal: AbortSignal.timeout(8000)
+    });
+    if (!resp.ok) {
+      if (resp.status === 403 || resp.status === 401) throw new Error('Invalid API key. Check your USDA key in Settings.');
+      continue;
+    }
+    const result = await resp.json();
+    if (result.foods && result.foods.length) {
+      // Pick the best match — prefer one whose description contains our key words
+      const keyWord = words[0] || '';
+      const best = result.foods.find(f => f.description && f.description.toLowerCase().includes(keyWord)) || result.foods[0];
+      return best;
+    }
+  }
+  return null;
+}
+
 async function fetchNutrition(recipeId) {
   const r = data.recipes.find(x=>x.id===recipeId);
   if (!r || !r.ingredients.length) { toast('No ingredients to analyze'); return; }
@@ -1587,20 +1639,11 @@ async function fetchNutrition(recipeId) {
   try {
     const totals = { calories: 0, protein_g: 0, carbohydrates_total_g: 0, fat_total_g: 0, fiber_g: 0, sugar_g: 0, sodium_mg: 0 };
     let matched = 0;
-    // Look up each ingredient individually via USDA FoodData Central
+    const missed = [];
     for (const ing of r.ingredients) {
       try {
-        const query = ing.name;
-        const resp = await fetch(`https://api.nal.usda.gov/fdc/v1/foods/search?api_key=${encodeURIComponent(apiKey)}&query=${encodeURIComponent(query)}&pageSize=1&dataType=Survey%20(FNDDS)`, {
-          signal: AbortSignal.timeout(8000)
-        });
-        if (!resp.ok) {
-          if (resp.status === 403 || resp.status === 401) throw new Error('Invalid API key. Check your USDA key in Settings.');
-          continue;
-        }
-        const data = await resp.json();
-        if (!data.foods || !data.foods.length) continue;
-        const food = data.foods[0];
+        const food = await searchUSDA(apiKey, ing.name);
+        if (!food) { missed.push(ing.name); continue; }
         const nutrients = {};
         (food.foodNutrients || []).forEach(n => { nutrients[n.nutrientId] = n.value || 0; });
         // USDA nutrient IDs: 1008=Energy(kcal), 1003=Protein, 1005=Carbs, 1004=Fat, 1079=Fiber, 2000=Sugar, 1093=Sodium
@@ -1614,7 +1657,7 @@ async function fetchNutrition(recipeId) {
         matched++;
       } catch(innerErr) {
         if (innerErr.message.includes('Invalid API key')) throw innerErr;
-        // Skip ingredient on timeout/error
+        missed.push(ing.name);
       }
     }
     if (!matched) {
@@ -1623,17 +1666,18 @@ async function fetchNutrition(recipeId) {
     }
     r._nutrition = totals;
     r._nutritionMatched = matched;
-    renderNutritionLabel(totals, matched, r.ingredients.length);
+    r._nutritionMissed = missed;
+    renderNutritionLabel(totals, matched, r.ingredients.length, missed);
   } catch(e) {
     if (el) el.innerHTML = `<p style="font-size:13px;color:var(--red);">${esc(e.message)}</p>`;
   }
 }
 
-function renderNutritionLabel(n, matched, total) {
+function renderNutritionLabel(n, matched, total, missed) {
   const el = document.getElementById('nutritionData');
   if (!el || !n) return;
   const matchNote = matched && total ? `Based on ${matched}/${total} ingredients` : 'Estimated total';
-  el.innerHTML = `
+  let html = `
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center;">
       <div style="background:var(--accent-light);padding:10px 6px;border-radius:8px;">
         <div style="font-size:20px;font-weight:700;color:var(--accent);">${Math.round(n.calories)}</div>
@@ -1661,6 +1705,10 @@ function renderNutritionLabel(n, matched, total) {
       </div>
     </div>
     <p style="font-size:11px;color:var(--text-secondary);margin-top:6px;text-align:center;">${matchNote} · Per 100g serving · USDA FoodData Central</p>`;
+  if (missed && missed.length) {
+    html += `<p style="font-size:11px;color:var(--text-secondary);margin-top:4px;text-align:center;">Could not find: ${missed.map(m => esc(m)).join(', ')}</p>`;
+  }
+  el.innerHTML = html;
 }
 
 // ===========================================================================
