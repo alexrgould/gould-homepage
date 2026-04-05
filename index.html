@@ -418,10 +418,10 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
     </div>
 
     <div class="card" style="margin-bottom:16px;">
-      <h3 style="margin-bottom:8px;">Nutrition API</h3>
-      <p style="font-size:13px; color:var(--text-secondary); margin-bottom:10px;">Get a free API key from <a href="https://api-ninjas.com" target="_blank" style="color:var(--blue);">api-ninjas.com</a> to see nutrition estimates on recipes.</p>
+      <h3 style="margin-bottom:8px;">Nutrition Estimates</h3>
+      <p style="font-size:13px; color:var(--text-secondary); margin-bottom:10px;">Get a free API key from <a href="https://fdc.nal.usda.gov/api-key-signup/" target="_blank" style="color:var(--blue);">USDA FoodData Central</a> — just enter your email and you'll get a key instantly. No account needed.</p>
       <div style="display:flex; gap:6px;">
-        <input type="text" id="nutritionApiKey" placeholder="Your API Ninjas key" style="flex:1; padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-size:13px;" onchange="saveNutritionKey()">
+        <input type="text" id="nutritionApiKey" placeholder="Your USDA API key" style="flex:1; padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-size:13px;" onchange="saveNutritionKey()">
         <button class="btn btn-secondary btn-sm" onclick="saveNutritionKey()">Save</button>
       </div>
     </div>
@@ -1558,7 +1558,7 @@ function showRecipeDetail(id) {
   if (apiKey) {
     html += `<button class="btn btn-sm btn-secondary" onclick="fetchNutrition('${r.id}')" style="font-size:11px;">Estimate</button>`;
   } else {
-    html += `<span style="font-size:11px;color:var(--text-secondary);cursor:pointer;" onclick="showView('sync')">Set up API key in Settings</span>`;
+    html += `<span style="font-size:11px;color:var(--text-secondary);cursor:pointer;" onclick="showView('sync')">Add free USDA key in Settings</span>`;
   }
   html += `</div>`;
   html += `<div id="nutritionData"></div>`;
@@ -1568,7 +1568,7 @@ function showRecipeDetail(id) {
   document.getElementById('recipeDetailModal').classList.add('open');
 
   // If we have cached nutrition, show it
-  if (r._nutrition) renderNutritionLabel(r._nutrition);
+  if (r._nutrition) renderNutritionLabel(r._nutrition, r._nutritionMatched, r.ingredients.length);
 }
 
 function closeDetailModal() { document.getElementById('recipeDetailModal').classList.remove('open'); }
@@ -1581,31 +1581,58 @@ async function fetchNutrition(recipeId) {
   const r = data.recipes.find(x=>x.id===recipeId);
   if (!r || !r.ingredients.length) { toast('No ingredients to analyze'); return; }
   const apiKey = localStorage.getItem('nutrition_api_key');
-  if (!apiKey) { toast('Add your API Ninjas key in Settings'); return; }
+  if (!apiKey) { toast('Get a free USDA API key — see Settings'); return; }
   const el = document.getElementById('nutritionData');
-  if (el) el.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">Calculating...</p>';
+  if (el) el.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">Looking up each ingredient...</p>';
   try {
-    const query = r.ingredients.map(i => (i.quantity ? i.quantity + ' ' : '') + i.name).join(', ');
-    const resp = await fetch('https://api.api-ninjas.com/v1/nutrition?query=' + encodeURIComponent(query), {
-      headers: { 'X-Api-Key': apiKey },
-      signal: AbortSignal.timeout(10000)
-    });
-    if (!resp.ok) throw new Error('API error ('+resp.status+')');
-    const items = await resp.json();
-    if (!items.length) { if (el) el.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">Could not find nutrition data for these ingredients.</p>'; return; }
-    // Sum up totals
     const totals = { calories: 0, protein_g: 0, carbohydrates_total_g: 0, fat_total_g: 0, fiber_g: 0, sugar_g: 0, sodium_mg: 0 };
-    items.forEach(item => { for (const k in totals) totals[k] += (item[k] || 0); });
+    let matched = 0;
+    // Look up each ingredient individually via USDA FoodData Central
+    for (const ing of r.ingredients) {
+      try {
+        const query = ing.name;
+        const resp = await fetch(`https://api.nal.usda.gov/fdc/v1/foods/search?api_key=${encodeURIComponent(apiKey)}&query=${encodeURIComponent(query)}&pageSize=1&dataType=Survey%20(FNDDS)`, {
+          signal: AbortSignal.timeout(8000)
+        });
+        if (!resp.ok) {
+          if (resp.status === 403 || resp.status === 401) throw new Error('Invalid API key. Check your USDA key in Settings.');
+          continue;
+        }
+        const data = await resp.json();
+        if (!data.foods || !data.foods.length) continue;
+        const food = data.foods[0];
+        const nutrients = {};
+        (food.foodNutrients || []).forEach(n => { nutrients[n.nutrientId] = n.value || 0; });
+        // USDA nutrient IDs: 1008=Energy(kcal), 1003=Protein, 1005=Carbs, 1004=Fat, 1079=Fiber, 2000=Sugar, 1093=Sodium
+        totals.calories += nutrients[1008] || 0;
+        totals.protein_g += nutrients[1003] || 0;
+        totals.carbohydrates_total_g += nutrients[1005] || 0;
+        totals.fat_total_g += nutrients[1004] || 0;
+        totals.fiber_g += nutrients[1079] || 0;
+        totals.sugar_g += nutrients[2000] || 0;
+        totals.sodium_mg += nutrients[1093] || 0;
+        matched++;
+      } catch(innerErr) {
+        if (innerErr.message.includes('Invalid API key')) throw innerErr;
+        // Skip ingredient on timeout/error
+      }
+    }
+    if (!matched) {
+      if (el) el.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">Could not find nutrition data for these ingredients.</p>';
+      return;
+    }
     r._nutrition = totals;
-    renderNutritionLabel(totals);
+    r._nutritionMatched = matched;
+    renderNutritionLabel(totals, matched, r.ingredients.length);
   } catch(e) {
-    if (el) el.innerHTML = `<p style="font-size:13px;color:var(--red);">Error: ${esc(e.message)}</p>`;
+    if (el) el.innerHTML = `<p style="font-size:13px;color:var(--red);">${esc(e.message)}</p>`;
   }
 }
 
-function renderNutritionLabel(n) {
+function renderNutritionLabel(n, matched, total) {
   const el = document.getElementById('nutritionData');
   if (!el || !n) return;
+  const matchNote = matched && total ? `Based on ${matched}/${total} ingredients` : 'Estimated total';
   el.innerHTML = `
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center;">
       <div style="background:var(--accent-light);padding:10px 6px;border-radius:8px;">
@@ -1633,7 +1660,7 @@ function renderNutritionLabel(n) {
         <div style="font-size:11px;color:var(--text-secondary);">Sugar</div>
       </div>
     </div>
-    <p style="font-size:11px;color:var(--text-secondary);margin-top:6px;text-align:center;">Estimated total for all ingredients · Powered by API Ninjas</p>`;
+    <p style="font-size:11px;color:var(--text-secondary);margin-top:6px;text-align:center;">${matchNote} · Per 100g serving · USDA FoodData Central</p>`;
 }
 
 // ===========================================================================
