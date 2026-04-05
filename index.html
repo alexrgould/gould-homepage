@@ -300,6 +300,9 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
       <span class="week-label" id="weekLabel"></span>
       <button onclick="changeWeek(1)">Next &rarr;</button>
     </div>
+    <div style="margin-bottom:12px;">
+      <button class="btn btn-primary btn-block" onclick="autoFillMealPlan()" style="display:flex;align-items:center;justify-content:center;gap:6px;">✨ Auto-Fill Empty Days</button>
+    </div>
     <div id="mealPlanDays"></div>
     <div class="btn-row" style="margin-top:16px;">
       <button class="btn btn-secondary btn-block" onclick="exportCalendar()">Export to Calendar (.ics)</button>
@@ -415,6 +418,25 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
     </div>
 
     <div class="card" style="margin-bottom:16px;">
+      <h3 style="margin-bottom:8px;">Nutrition API</h3>
+      <p style="font-size:13px; color:var(--text-secondary); margin-bottom:10px;">Get a free API key from <a href="https://api-ninjas.com" target="_blank" style="color:var(--blue);">api-ninjas.com</a> to see nutrition estimates on recipes.</p>
+      <div style="display:flex; gap:6px;">
+        <input type="text" id="nutritionApiKey" placeholder="Your API Ninjas key" style="flex:1; padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-size:13px;" onchange="saveNutritionKey()">
+        <button class="btn btn-secondary btn-sm" onclick="saveNutritionKey()">Save</button>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
+      <h3 style="margin-bottom:8px;">Recipe Blogs</h3>
+      <p style="font-size:13px; color:var(--text-secondary); margin-bottom:10px;">Add your favorite food blogs to discover new recipes on the Recipes page.</p>
+      <div id="blogsList"></div>
+      <div style="display:flex; gap:4px; margin-top:8px;">
+        <input type="text" id="newBlogUrl" placeholder="e.g., budgetbytes.com" style="flex:1; padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-size:13px;" onkeydown="if(event.key==='Enter')addBlog()">
+        <button class="btn btn-secondary btn-sm" onclick="addBlog()">+ Add</button>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
       <h3 style="margin-bottom:8px;">Get Started</h3>
       <button class="btn btn-secondary btn-block" onclick="loadSampleData()">Load Sample Recipes</button>
     </div>
@@ -520,7 +542,7 @@ const CATEGORIES = ['Produce','Meat & Seafood','Dairy','Bakery','Pantry','Frozen
 const DEFAULT_CUISINES = ['American','Mexican','Italian','Asian','Mediterranean','Indian','Southern','Comfort Food','Salads & Light','Other'];
 function getCuisines() { return (data.cuisines && data.cuisines.length) ? data.cuisines : DEFAULT_CUISINES; }
 function ensureDD() { if(!data.doordash) data.doordash={}; if(!data.doordash.orders) data.doordash.orders=[]; if(!data.doordash.restaurants) data.doordash.restaurants=[]; if(!data.doordash.monthlyBudget&&data.doordash.monthlyBudget!==0) data.doordash.monthlyBudget=150; if(!data.doordash.monthlyTarget&&data.doordash.monthlyTarget!==0) data.doordash.monthlyTarget=4; return data.doordash; }
-let data = { recipes: [], mealPlan: {}, staples: [], checkedItems: {}, children: [], cuisines: [...DEFAULT_CUISINES], usageHistory: [], doordash: { orders: [], monthlyBudget: 150, monthlyTarget: 4 }, consequences: [], groceryExtras: [] };
+let data = { recipes: [], mealPlan: {}, staples: [], checkedItems: {}, children: [], cuisines: [...DEFAULT_CUISINES], usageHistory: [], doordash: { orders: [], monthlyBudget: 150, monthlyTarget: 4 }, consequences: [], groceryExtras: [], blogs: [] };
 let familyCode = null;
 let currentWeekStart = getMonday(new Date());
 let cuisineFilters = {}; // tracks user's cuisine selection per day key
@@ -564,6 +586,7 @@ async function saveToFirebase() {
       doordash: data.doordash || { orders: [], monthlyBudget: 150, monthlyTarget: 4 },
       consequences: data.consequences || [],
       groceryExtras: data.groceryExtras || [],
+      blogs: data.blogs || [],
       updatedAt: firebase.firestore.FieldValue.serverTimestamp()
     });
   } catch(e) { console.log('Save failed:', e); }
@@ -577,8 +600,8 @@ function startListening() {
     if (!doc.exists) return;
     const remote = doc.data();
     // Only update if data actually changed (avoid echo from our own save)
-    const remoteStr = JSON.stringify({ r: remote.recipes, m: remote.mealPlan, s: remote.staples, c: remote.children, ci: remote.checkedItems, cu: remote.cuisines, uh: remote.usageHistory, dd: remote.doordash, cq: remote.consequences, ge: remote.groceryExtras });
-    const localStr = JSON.stringify({ r: data.recipes, m: data.mealPlan, s: data.staples, c: data.children, ci: data.checkedItems, cu: data.cuisines, uh: data.usageHistory, dd: data.doordash, cq: data.consequences, ge: data.groceryExtras });
+    const remoteStr = JSON.stringify({ r: remote.recipes, m: remote.mealPlan, s: remote.staples, c: remote.children, ci: remote.checkedItems, cu: remote.cuisines, uh: remote.usageHistory, dd: remote.doordash, cq: remote.consequences, ge: remote.groceryExtras, bl: remote.blogs });
+    const localStr = JSON.stringify({ r: data.recipes, m: data.mealPlan, s: data.staples, c: data.children, ci: data.checkedItems, cu: data.cuisines, uh: data.usageHistory, dd: data.doordash, cq: data.consequences, ge: data.groceryExtras, bl: data.blogs });
     if (remoteStr !== localStr) {
       data.recipes = remote.recipes || [];
       data.mealPlan = remote.mealPlan || {};
@@ -590,6 +613,7 @@ function startListening() {
       data.doordash = remote.doordash || { orders: [], monthlyBudget: 150, monthlyTarget: 4 };
       data.consequences = remote.consequences || [];
       data.groceryExtras = remote.groceryExtras || [];
+      data.blogs = remote.blogs || [];
       persistLocal();
       refreshCurrentView();
     }
@@ -618,7 +642,7 @@ function showApp() {
 
 async function createFamily() {
   familyCode = document.getElementById('newFamilyCode').textContent;
-  data = { recipes: [], mealPlan: {}, staples: [], checkedItems: {}, children: [], cuisines: [...DEFAULT_CUISINES], usageHistory: [], doordash: { orders: [], monthlyBudget: 150, monthlyTarget: 4 }, consequences: [], groceryExtras: [] };
+  data = { recipes: [], mealPlan: {}, staples: [], checkedItems: {}, children: [], cuisines: [...DEFAULT_CUISINES], usageHistory: [], doordash: { orders: [], monthlyBudget: 150, monthlyTarget: 4 }, consequences: [], groceryExtras: [], blogs: [] };
   persistLocal();
   if (firebaseReady) {
     await saveToFirebase();
@@ -649,6 +673,7 @@ async function joinFamily() {
         data.doordash = remote.doordash || { orders: [], monthlyBudget: 150, monthlyTarget: 4 };
         data.consequences = remote.consequences || [];
         data.groceryExtras = remote.groceryExtras || [];
+        data.blogs = remote.blogs || [];
         persistLocal();
       }
     } catch(e) { console.log('Join fetch failed:', e); }
@@ -662,7 +687,7 @@ function leaveFamily() {
   if (!confirm('Disconnect from this family? Your data will stay on the server for your partner.')) return;
   if (unsubscribe) unsubscribe();
   familyCode = null;
-  data = { recipes: [], mealPlan: {}, staples: [], checkedItems: {}, children: [], cuisines: [...DEFAULT_CUISINES], usageHistory: [], doordash: { orders: [], monthlyBudget: 150, monthlyTarget: 4 }, consequences: [], groceryExtras: [] };
+  data = { recipes: [], mealPlan: {}, staples: [], checkedItems: {}, children: [], cuisines: [...DEFAULT_CUISINES], usageHistory: [], doordash: { orders: [], monthlyBudget: 150, monthlyTarget: 4 }, consequences: [], groceryExtras: [], blogs: [] };
   localStorage.removeItem('mp_data');
   localStorage.removeItem('mp_family');
   showSetup();
@@ -677,11 +702,11 @@ function showView(name) {
   document.getElementById('view-' + name).classList.add('active');
   document.getElementById('nav-' + name).classList.add('active');
   if (name === 'home') renderHome();
-  if (name === 'recipes') renderRecipes();
+  if (name === 'recipes') { renderRecipes(); if (!blogFeedCache.items || Date.now() - (blogFeedCache.fetchedAt||0) > 300000) fetchBlogFeeds(); else renderBlogFeed(blogFeedCache.items); }
   if (name === 'plan') renderMealPlan();
   if (name === 'grocery') renderGrocery();
   if (name === 'staples') renderStaples();
-  if (name === 'sync') { renderDoorDashSettings(); updateCalendarSettingsUI(); renderCuisines(); renderSync(); renderKids(); }
+  if (name === 'sync') { renderDoorDashSettings(); updateCalendarSettingsUI(); renderCuisines(); renderSync(); renderKids(); renderBlogsList(); const nk=document.getElementById('nutritionApiKey'); if(nk) nk.value=localStorage.getItem('nutrition_api_key')||''; }
 }
 
 // ===========================================================================
@@ -1423,24 +1448,24 @@ function renderRecipes() {
       return a.localeCompare(b);
     });
 
+    function recipeCard(r, showCuisine) {
+      const c = counts[r.id]||0;
+      const badge = c >= 3 ? ' <span style="font-size:11px;background:var(--accent-light);color:var(--accent);padding:1px 6px;border-radius:4px;font-weight:600;">★ Standard</span>' : '';
+      const avg = getAverageRating(r.id);
+      const stars = avg > 0 ? ' · <span style="color:#f5a623;">' + '★'.repeat(Math.round(avg)) + '</span> ' + avg.toFixed(1) : '';
+      return `<div class="card" onclick="showRecipeDetail('${r.id}')"><div class="card-title">${esc(r.name)}${badge}</div><div class="card-sub">${showCuisine&&r.cuisine?esc(r.cuisine)+' · ':''}${r.ingredients.length} ingredient${r.ingredients.length!==1?'s':''}${c?' · made '+c+'x':''}${stars}</div></div>`;
+    }
+
     // If searching, show flat list (easier to scan results)
     if (q) {
-      el.innerHTML = list.map(r => {
-        const c = counts[r.id]||0;
-        const badge = c >= 3 ? ' <span style="font-size:11px;background:var(--accent-light);color:var(--accent);padding:1px 6px;border-radius:4px;font-weight:600;">★ Standard</span>' : '';
-        return `<div class="card" onclick="showRecipeDetail('${r.id}')"><div class="card-title">${esc(r.name)}${badge}</div><div class="card-sub">${r.cuisine?esc(r.cuisine)+' · ':''}${r.ingredients.length} ingredient${r.ingredients.length!==1?'s':''}${c?' · made '+c+'x':''}</div></div>`;
-      }).join('');
+      el.innerHTML = list.map(r => recipeCard(r, true)).join('');
     } else {
       // Grouped view with collapsible sections
       el.innerHTML = cuisineKeys.map(cuisine => {
         const recipes = groups[cuisine];
         const safeId = cuisine.replace(/[^a-zA-Z0-9]/g,'_');
         const isOpen = openCuisineGroups[cuisine] === true; // default collapsed
-        const cards = recipes.map(r => {
-          const c = counts[r.id]||0;
-          const badge = c >= 3 ? ' <span style="font-size:11px;background:var(--accent-light);color:var(--accent);padding:1px 6px;border-radius:4px;font-weight:600;">★ Standard</span>' : '';
-          return `<div class="card" onclick="showRecipeDetail('${r.id}')"><div class="card-title">${esc(r.name)}${badge}</div><div class="card-sub">${r.ingredients.length} ingredient${r.ingredients.length!==1?'s':''}${c?' · made '+c+'x':''}</div></div>`;
-        }).join('');
+        const cards = recipes.map(r => recipeCard(r, false)).join('');
         return `<div id="cg-${safeId}" class="cuisine-group${isOpen?' open':''}">
           <div class="cuisine-group-header" onclick="toggleCuisineGroup('${esc(cuisine)}')">
             <h3>${esc(cuisine)}</h3>
@@ -1509,12 +1534,128 @@ function showRecipeDetail(id) {
   html += '<h3 style="margin-bottom:8px;">Ingredients</h3>';
   if (r.ingredients.length) { html += '<ul style="padding-left:18px;margin-bottom:16px;">'; r.ingredients.forEach(i => { html += `<li style="margin-bottom:4px;font-size:15px;">${esc(i.quantity?i.quantity+' ':'')}${esc(i.name)} <span style="color:var(--text-secondary);font-size:12px;">${esc(i.category)}</span></li>`; }); html += '</ul>'; }
   if (r.notes) { html += '<h3 style="margin-bottom:8px;">Notes</h3>'; html += `<p style="font-size:15px;white-space:pre-wrap;color:var(--text-secondary);">${esc(r.notes)}</p>`; }
+
+  // Ratings
+  const avgRating = getAverageRating(r.id);
+  const ratingCount = (r.ratings || []).length;
+  html += `<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);">`;
+  html += `<h3 style="margin-bottom:8px;">Family Rating</h3>`;
+  html += `<div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">`;
+  html += `<div id="detailStars" style="display:flex;gap:2px;">`;
+  for (let s = 1; s <= 5; s++) {
+    const filled = s <= Math.round(avgRating);
+    html += `<button onclick="rateRecipe('${r.id}',${s})" style="background:none;border:none;font-size:24px;cursor:pointer;padding:2px;color:${filled ? '#f5a623' : '#ddd'};">${filled ? '★' : '☆'}</button>`;
+  }
+  html += `</div>`;
+  if (ratingCount) html += `<span style="font-size:13px;color:var(--text-secondary);">${avgRating.toFixed(1)} (${ratingCount} rating${ratingCount>1?'s':''})</span>`;
+  else html += `<span style="font-size:13px;color:var(--text-secondary);">Not rated yet</span>`;
+  html += `</div></div>`;
+
+  // Nutrition
+  html += `<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">`;
+  html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><h3>Nutrition Estimate</h3>`;
+  const apiKey = localStorage.getItem('nutrition_api_key');
+  if (apiKey) {
+    html += `<button class="btn btn-sm btn-secondary" onclick="fetchNutrition('${r.id}')" style="font-size:11px;">Estimate</button>`;
+  } else {
+    html += `<span style="font-size:11px;color:var(--text-secondary);cursor:pointer;" onclick="showView('sync')">Set up API key in Settings</span>`;
+  }
+  html += `</div>`;
+  html += `<div id="nutritionData"></div>`;
+  html += `</div>`;
+
   document.getElementById('detailContent').innerHTML = html;
   document.getElementById('recipeDetailModal').classList.add('open');
+
+  // If we have cached nutrition, show it
+  if (r._nutrition) renderNutritionLabel(r._nutrition);
 }
 
 function closeDetailModal() { document.getElementById('recipeDetailModal').classList.remove('open'); }
 function editFromDetail() { closeDetailModal(); openRecipeModal(currentDetailId); }
+
+// ===========================================================================
+// NUTRITION
+// ===========================================================================
+async function fetchNutrition(recipeId) {
+  const r = data.recipes.find(x=>x.id===recipeId);
+  if (!r || !r.ingredients.length) { toast('No ingredients to analyze'); return; }
+  const apiKey = localStorage.getItem('nutrition_api_key');
+  if (!apiKey) { toast('Add your API Ninjas key in Settings'); return; }
+  const el = document.getElementById('nutritionData');
+  if (el) el.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">Calculating...</p>';
+  try {
+    const query = r.ingredients.map(i => (i.quantity ? i.quantity + ' ' : '') + i.name).join(', ');
+    const resp = await fetch('https://api.api-ninjas.com/v1/nutrition?query=' + encodeURIComponent(query), {
+      headers: { 'X-Api-Key': apiKey },
+      signal: AbortSignal.timeout(10000)
+    });
+    if (!resp.ok) throw new Error('API error ('+resp.status+')');
+    const items = await resp.json();
+    if (!items.length) { if (el) el.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">Could not find nutrition data for these ingredients.</p>'; return; }
+    // Sum up totals
+    const totals = { calories: 0, protein_g: 0, carbohydrates_total_g: 0, fat_total_g: 0, fiber_g: 0, sugar_g: 0, sodium_mg: 0 };
+    items.forEach(item => { for (const k in totals) totals[k] += (item[k] || 0); });
+    r._nutrition = totals;
+    renderNutritionLabel(totals);
+  } catch(e) {
+    if (el) el.innerHTML = `<p style="font-size:13px;color:var(--red);">Error: ${esc(e.message)}</p>`;
+  }
+}
+
+function renderNutritionLabel(n) {
+  const el = document.getElementById('nutritionData');
+  if (!el || !n) return;
+  el.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center;">
+      <div style="background:var(--accent-light);padding:10px 6px;border-radius:8px;">
+        <div style="font-size:20px;font-weight:700;color:var(--accent);">${Math.round(n.calories)}</div>
+        <div style="font-size:11px;color:var(--text-secondary);">Calories</div>
+      </div>
+      <div style="background:var(--blue-light);padding:10px 6px;border-radius:8px;">
+        <div style="font-size:20px;font-weight:700;color:var(--blue);">${Math.round(n.protein_g)}g</div>
+        <div style="font-size:11px;color:var(--text-secondary);">Protein</div>
+      </div>
+      <div style="background:var(--green-light);padding:10px 6px;border-radius:8px;">
+        <div style="font-size:20px;font-weight:700;color:var(--green);">${Math.round(n.carbohydrates_total_g)}g</div>
+        <div style="font-size:11px;color:var(--text-secondary);">Carbs</div>
+      </div>
+      <div style="background:var(--red-light);padding:10px 6px;border-radius:8px;">
+        <div style="font-size:20px;font-weight:700;color:var(--red);">${Math.round(n.fat_total_g)}g</div>
+        <div style="font-size:11px;color:var(--text-secondary);">Fat</div>
+      </div>
+      <div style="background:var(--purple-light);padding:10px 6px;border-radius:8px;">
+        <div style="font-size:20px;font-weight:700;color:var(--purple);">${Math.round(n.fiber_g)}g</div>
+        <div style="font-size:11px;color:var(--text-secondary);">Fiber</div>
+      </div>
+      <div style="background:var(--surface);padding:10px 6px;border-radius:8px;border:1px solid var(--border);">
+        <div style="font-size:20px;font-weight:700;color:var(--text);">${Math.round(n.sugar_g)}g</div>
+        <div style="font-size:11px;color:var(--text-secondary);">Sugar</div>
+      </div>
+    </div>
+    <p style="font-size:11px;color:var(--text-secondary);margin-top:6px;text-align:center;">Estimated total for all ingredients · Powered by API Ninjas</p>`;
+}
+
+// ===========================================================================
+// FAMILY RATINGS
+// ===========================================================================
+function rateRecipe(recipeId, stars) {
+  const r = data.recipes.find(x=>x.id===recipeId);
+  if (!r) return;
+  if (!r.ratings) r.ratings = [];
+  // Add a new rating (timestamped so each family member's votes accumulate)
+  r.ratings.push({ stars, date: Date.now() });
+  persist();
+  // Re-render the detail view
+  showRecipeDetail(recipeId);
+  toast('Rated ' + stars + ' star' + (stars>1?'s':'') + '!');
+}
+
+function getAverageRating(recipeId) {
+  const r = data.recipes.find(x=>x.id===recipeId);
+  if (!r || !r.ratings || !r.ratings.length) return 0;
+  return r.ratings.reduce((sum, rt) => sum + rt.stars, 0) / r.ratings.length;
+}
 
 function openRecipeModal(editId) {
   const r = editId ? data.recipes.find(x=>x.id===editId) : null;
@@ -1567,6 +1708,152 @@ function deleteRecipe() {
 }
 
 // ===========================================================================
+function saveNutritionKey() {
+  const key = document.getElementById('nutritionApiKey').value.trim();
+  if (key) {
+    localStorage.setItem('nutrition_api_key', key);
+    toast('API key saved!');
+  } else {
+    localStorage.removeItem('nutrition_api_key');
+    toast('API key removed');
+  }
+}
+
+// ===========================================================================
+// BLOG FEED
+// ===========================================================================
+let blogFeedCache = {};
+let blogFeedLoading = false;
+
+function renderBlogsList() {
+  const el = document.getElementById('blogsList');
+  if (!el) return;
+  const blogs = data.blogs || [];
+  if (!blogs.length) { el.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">No blogs added yet.</p>'; return; }
+  el.innerHTML = blogs.map((b,i) => `<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;${i<blogs.length-1?'border-bottom:1px solid var(--border);':''}"><span style="font-size:14px;">${esc(b.name||b.url)}</span><button onclick="removeBlog(${i})" style="background:none;border:none;color:var(--red);font-size:16px;cursor:pointer;">✕</button></div>`).join('');
+}
+
+function addBlog() {
+  let url = document.getElementById('newBlogUrl').value.trim();
+  if (!url) return;
+  // Normalize URL
+  if (!url.startsWith('http')) url = 'https://' + url;
+  // Extract domain name for display
+  let name = url;
+  try { name = new URL(url).hostname.replace('www.',''); } catch(e) {}
+  if (!data.blogs) data.blogs = [];
+  if (data.blogs.find(b => b.url === url)) { toast('Already added!'); return; }
+  data.blogs.push({ url, name });
+  document.getElementById('newBlogUrl').value = '';
+  persist(); renderBlogsList();
+  toast('Added ' + name);
+  // Trigger feed fetch
+  fetchBlogFeeds();
+}
+
+function removeBlog(i) {
+  if (!data.blogs) return;
+  const name = data.blogs[i].name;
+  data.blogs.splice(i, 1);
+  persist(); renderBlogsList();
+  toast('Removed ' + name);
+}
+
+async function fetchBlogFeeds() {
+  if (blogFeedLoading) return;
+  const blogs = data.blogs || [];
+  if (!blogs.length) { renderBlogFeed([]); return; }
+  blogFeedLoading = true;
+  const allItems = [];
+  for (const blog of blogs) {
+    // Try common feed paths
+    const feedUrls = [
+      blog.url.replace(/\/$/, '') + '/feed/',
+      blog.url.replace(/\/$/, '') + '/rss/',
+      blog.url.replace(/\/$/, '') + '/feed',
+      blog.url.replace(/\/$/, '') + '/rss.xml',
+    ];
+    let fetched = false;
+    for (const feedUrl of feedUrls) {
+      if (fetched) break;
+      try {
+        const resp = await fetch(`https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(feedUrl)}&count=5`, {signal: AbortSignal.timeout(8000)});
+        if (!resp.ok) continue;
+        const data = await resp.json();
+        if (data.status === 'ok' && data.items && data.items.length) {
+          data.items.forEach(item => {
+            allItems.push({
+              title: item.title,
+              link: item.link,
+              pubDate: item.pubDate,
+              description: item.description ? item.description.replace(/<[^>]*>/g, '').substring(0, 150) : '',
+              thumbnail: item.thumbnail || item.enclosure?.link || '',
+              blogName: blog.name
+            });
+          });
+          fetched = true;
+        }
+      } catch(e) { /* try next feed URL */ }
+    }
+  }
+  // Sort by date (newest first)
+  allItems.sort((a,b) => new Date(b.pubDate) - new Date(a.pubDate));
+  blogFeedCache = { items: allItems.slice(0, 15), fetchedAt: Date.now() };
+  blogFeedLoading = false;
+  renderBlogFeed(blogFeedCache.items);
+}
+
+function renderBlogFeed(items) {
+  const el = document.getElementById('recipeDiscover');
+  if (!el) return;
+  // Keep existing discover content, add blog section at top
+  let blogHtml = '';
+  if (!(data.blogs||[]).length) {
+    // No blogs configured — show hint
+    blogHtml += `<div class="card" style="margin-bottom:16px;border-left:4px solid var(--purple);"><h3 style="margin-bottom:4px;">📰 Recipe Blogs</h3><p style="font-size:13px;color:var(--text-secondary);">Add your favorite food blogs in Settings to discover new recipes here!</p></div>`;
+  } else if (!items || !items.length) {
+    blogHtml += `<div class="card" style="margin-bottom:16px;border-left:4px solid var(--purple);"><h3 style="margin-bottom:4px;">📰 From Your Blogs</h3><p style="font-size:13px;color:var(--text-secondary);">${blogFeedLoading ? 'Loading...' : 'No posts found. Check your blog URLs in Settings.'}</p></div>`;
+  } else {
+    blogHtml += `<div class="card" style="margin-bottom:16px;border-left:4px solid var(--purple);">`;
+    blogHtml += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;"><h3>📰 From Your Blogs</h3><button class="btn btn-sm btn-secondary" onclick="fetchBlogFeeds()" style="font-size:11px;">Refresh</button></div>`;
+    items.forEach(item => {
+      const timeAgo = getTimeAgo(new Date(item.pubDate));
+      blogHtml += `<a href="${esc(item.link)}" target="_blank" style="text-decoration:none;color:inherit;display:block;padding:10px 0;border-top:1px solid var(--border);">`;
+      blogHtml += `<div style="display:flex;gap:10px;align-items:flex-start;">`;
+      if (item.thumbnail) {
+        blogHtml += `<img src="${esc(item.thumbnail)}" style="width:60px;height:60px;object-fit:cover;border-radius:6px;flex-shrink:0;" onerror="this.style.display='none'">`;
+      }
+      blogHtml += `<div style="flex:1;min-width:0;">`;
+      blogHtml += `<div style="font-size:14px;font-weight:600;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(item.title)}</div>`;
+      blogHtml += `<div style="font-size:12px;color:var(--text-secondary);margin-bottom:2px;">${esc(item.blogName)} · ${timeAgo}</div>`;
+      if (item.description) blogHtml += `<div style="font-size:12px;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(item.description)}</div>`;
+      blogHtml += `</div></div></a>`;
+    });
+    blogHtml += `</div>`;
+  }
+  // Insert blog feed before existing discover content
+  const existingDiscover = el.querySelector('.discover-standard');
+  const discoverContent = existingDiscover ? existingDiscover.outerHTML : '';
+  const blogContainer = el.querySelector('.blog-feed-container');
+  if (blogContainer) {
+    blogContainer.innerHTML = blogHtml;
+  } else {
+    // Wrap existing content and prepend blog feed
+    el.innerHTML = `<div class="blog-feed-container">${blogHtml}</div><div class="discover-standard">${el.innerHTML}</div>`;
+  }
+}
+
+function getTimeAgo(date) {
+  const now = new Date();
+  const diff = now - date;
+  const days = Math.floor(diff / (1000*60*60*24));
+  if (days === 0) return 'Today';
+  if (days === 1) return 'Yesterday';
+  if (days < 7) return days + ' days ago';
+  if (days < 30) return Math.floor(days/7) + 'w ago';
+  return Math.floor(days/30) + 'mo ago';
+}
+
 // URL IMPORT
 // ===========================================================================
 function openUrlImport() { document.getElementById('urlImportModal').classList.add('open'); document.getElementById('importUrl').value=''; setImportStatus('',''); }
@@ -1947,6 +2234,94 @@ function setMeal(dk,recipeId) {
 }
 
 // ===========================================================================
+// AUTO MEAL PLAN GENERATOR
+// ===========================================================================
+function autoFillMealPlan() {
+  if (!data.recipes.length) { toast('Add some recipes first!'); return; }
+  const ddOrders = (data.doordash||{orders:[]}).orders;
+  const emptyDays = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(currentWeekStart); d.setDate(d.getDate()+i);
+    const dk = dateKey(d);
+    const hasRecipe = (data.mealPlan[dk]||[]).length > 0;
+    const hasOrder = ddOrders.find(o=>o.date===dk);
+    if (!hasRecipe && !hasOrder) emptyDays.push(dk);
+  }
+  if (!emptyDays.length) { toast('All days are already planned!'); return; }
+
+  // Get usage stats and cuisines used this week already
+  const stats = getRecipeStats();
+  const weekCuisines = [];
+  const weekRecipeIds = new Set();
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(currentWeekStart); d.setDate(d.getDate()+i);
+    const dk = dateKey(d);
+    const meals = data.mealPlan[dk]||[];
+    if (meals.length) {
+      const r = data.recipes.find(x=>x.id===meals[0].recipeId);
+      if (r) { weekCuisines.push(r.cuisine); weekRecipeIds.add(r.id); }
+    }
+  }
+
+  // Score recipes: prefer diversity (different cuisines), recently unused, and variety
+  const candidates = data.recipes.filter(r => !weekRecipeIds.has(r.id));
+  const allRecipes = candidates.length >= emptyDays.length ? candidates : [...data.recipes];
+
+  // Sort by: 1) cuisine not yet used this week, 2) least recently used, 3) random tiebreak
+  const now = Date.now();
+  const scored = allRecipes.map(r => {
+    let score = 0;
+    // Prefer cuisines not yet in the week
+    if (!weekCuisines.includes(r.cuisine)) score += 100;
+    // Prefer less-used recipes
+    const useCount = stats.counts[r.id] || 0;
+    score -= useCount * 10;
+    // Prefer not recently used
+    const lastUsed = stats.lastUsed[r.id] || 0;
+    const daysSinceUsed = lastUsed ? Math.floor((now - lastUsed) / (1000*60*60*24)) : 999;
+    score += Math.min(daysSinceUsed, 60);
+    // Random tiebreak
+    score += Math.random() * 20;
+    return { recipe: r, score };
+  });
+
+  scored.sort((a,b) => b.score - a.score);
+
+  // Pick one per empty day, avoiding repeats and ensuring cuisine diversity
+  const picked = [];
+  const pickedIds = new Set(weekRecipeIds);
+  const pickedCuisines = [...weekCuisines];
+
+  for (const dk of emptyDays) {
+    // Re-score remaining based on what we've picked so far
+    let best = null, bestScore = -Infinity;
+    for (const s of scored) {
+      if (pickedIds.has(s.recipe.id)) continue;
+      let bonus = 0;
+      if (!pickedCuisines.includes(s.recipe.cuisine)) bonus += 50;
+      const total = s.score + bonus;
+      if (total > bestScore) { bestScore = total; best = s; }
+    }
+    if (!best) {
+      // All recipes used, just pick randomly
+      best = scored[Math.floor(Math.random() * scored.length)];
+    }
+    picked.push({ dk, recipe: best.recipe });
+    pickedIds.add(best.recipe.id);
+    pickedCuisines.push(best.recipe.cuisine);
+  }
+
+  // Apply picks
+  for (const p of picked) {
+    data.mealPlan[p.dk] = [{ meal: 'dinner', recipeId: p.recipe.id }];
+    if (!data.usageHistory) data.usageHistory = [];
+    data.usageHistory.push({ recipeId: p.recipe.id, date: p.dk, added: Date.now() });
+  }
+  persist(); renderMealPlan();
+  toast(`Filled ${picked.length} day${picked.length>1?'s':''} with diverse recipes!`);
+}
+
+// ===========================================================================
 // GROCERY
 // ===========================================================================
 function getGroceryItems() {
@@ -2172,6 +2547,7 @@ if(!data.usageHistory) data.usageHistory=[];
 if(!data.doordash) data.doordash={ orders:[], monthlyBudget:150, monthlyTarget:4 };
 if(!data.consequences) data.consequences=[];
 if(!data.groceryExtras) data.groceryExtras=[];
+if(!data.blogs) data.blogs=[];
 initFirebase();
 
 // Register service worker for PWA
