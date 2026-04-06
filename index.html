@@ -435,6 +435,8 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
         <input type="text" id="newBlogUrl" placeholder="e.g., budgetbytes.com" style="flex:1; padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-size:13px;" onkeydown="if(event.key==='Enter')addBlog()">
         <button class="btn btn-secondary btn-sm" onclick="addBlog()">+ Add</button>
       </div>
+      <div id="blogDiag" style="margin-top:8px;"></div>
+      <button class="btn btn-secondary btn-sm" style="margin-top:8px;font-size:11px;" onclick="testBlogFeeds()">🔍 Test Feeds</button>
     </div>
 
     <div class="card" style="margin-bottom:16px;">
@@ -1884,6 +1886,7 @@ function saveNutritionKey() {
 // ===========================================================================
 let blogFeedCache = {};
 let blogFeedLoading = false;
+let blogFeedLastError = '';
 
 function renderBlogsList() {
   const el = document.getElementById('blogsList');
@@ -1919,67 +1922,114 @@ function removeBlog(i) {
   toast('Removed ' + name);
 }
 
-// Auto-discover the RSS/Atom feed URL from a blog's homepage
-async function discoverFeedUrl(blogUrl) {
+// Safe timeout fetch — AbortSignal.timeout() may not exist on older browsers
+function fetchWithTimeout(url, opts, ms) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms || 10000);
+  return fetch(url, { ...opts, signal: controller.signal }).finally(() => clearTimeout(timer));
+}
+
+// Parse RSS/Atom XML into standardized items array
+function parseRssXml(xmlText) {
   try {
-    const html = await fetchViaProxy(blogUrl);
-    if (!html) return null;
-    // Look for <link rel="alternate" type="application/rss+xml" ...> or atom+xml
-    const linkRe = /<link[^>]+rel=["']alternate["'][^>]*>/gi;
-    const matches = html.match(linkRe) || [];
-    for (const tag of matches) {
-      if (/type=["'](application\/rss\+xml|application\/atom\+xml|text\/xml)["']/i.test(tag)) {
-        const hrefMatch = tag.match(/href=["']([^"']+)["']/i);
-        if (hrefMatch && hrefMatch[1]) {
-          let feedHref = hrefMatch[1].replace(/&amp;/g, '&');
-          // Resolve relative URLs
-          if (feedHref.startsWith('/')) {
-            try { feedHref = new URL(feedHref, blogUrl).href; } catch(e) {}
-          } else if (!feedHref.startsWith('http')) {
-            try { feedHref = new URL(feedHref, blogUrl).href; } catch(e) {}
-          }
-          return feedHref;
-        }
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(xmlText, 'text/xml');
+    if (doc.querySelector('parsererror')) return null;
+    const items = [];
+    // RSS 2.0
+    doc.querySelectorAll('item').forEach(item => {
+      const getText = tag => { const el = item.querySelector(tag); return el ? el.textContent.trim() : ''; };
+      const desc = getText('description').replace(/<[^>]*>/g, '').substring(0, 150);
+      // Try to find image in content or media
+      let thumb = '';
+      const mediaContent = item.querySelector('content[url]');
+      if (mediaContent) thumb = mediaContent.getAttribute('url') || '';
+      if (!thumb) {
+        const enclosure = item.querySelector('enclosure[url]');
+        if (enclosure && (enclosure.getAttribute('type')||'').startsWith('image')) thumb = enclosure.getAttribute('url') || '';
       }
-    }
-  } catch(e) { /* proxy failed, fall back to guessing */ }
+      if (!thumb) {
+        const imgMatch = (item.querySelector('description')||{textContent:''}).textContent.match(/<img[^>]+src=["']([^"']+)["']/);
+        if (imgMatch) thumb = imgMatch[1];
+      }
+      items.push({ title: getText('title'), link: getText('link'), pubDate: getText('pubDate'), description: desc, thumbnail: thumb });
+    });
+    if (items.length) return items.slice(0, 10);
+    // Atom
+    doc.querySelectorAll('entry').forEach(entry => {
+      const getText = tag => { const el = entry.querySelector(tag); return el ? el.textContent.trim() : ''; };
+      const linkEl = entry.querySelector('link[href]');
+      const link = linkEl ? linkEl.getAttribute('href') : '';
+      const desc = getText('summary').replace(/<[^>]*>/g, '').substring(0, 150) || getText('content').replace(/<[^>]*>/g, '').substring(0, 150);
+      items.push({ title: getText('title'), link, pubDate: getText('published') || getText('updated'), description: desc, thumbnail: '' });
+    });
+    return items.length ? items.slice(0, 10) : null;
+  } catch(e) { return null; }
+}
+
+// Strategy 1: RSS-to-JSON services (they handle CORS + parsing)
+async function tryJsonServices(feedUrl) {
+  const services = [
+    { name: 'rss2json', mkUrl: u => `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(u)}&count=10`,
+      parse: j => { if (j.status==='ok' && j.items && j.items.length) return j.items.map(i => ({
+        title: i.title, link: i.link, pubDate: i.pubDate,
+        description: i.description ? i.description.replace(/<[^>]*>/g,'').substring(0,150) : '',
+        thumbnail: i.thumbnail || (i.enclosure&&i.enclosure.link) || '',
+      })); return null; }
+    },
+    { name: 'feed2json', mkUrl: u => `https://www.toptal.com/developers/feed2json/convert?url=${encodeURIComponent(u)}`,
+      parse: j => { if (j.items && j.items.length) return j.items.map(i => ({
+        title: i.title||'', link: i.url||i.id||'',
+        pubDate: i.date_published||i.date_modified||'',
+        description: (i.content_text||i.summary||'').replace(/<[^>]*>/g,'').substring(0,150),
+        thumbnail: i.image||i.banner_image||'',
+      })); return null; }
+    },
+  ];
+  for (const svc of services) {
+    try {
+      console.log('[BlogFeed] Trying', svc.name, 'for', feedUrl);
+      const resp = await fetchWithTimeout(svc.mkUrl(feedUrl), {}, 12000);
+      if (!resp.ok) { console.log('[BlogFeed]', svc.name, 'HTTP', resp.status); continue; }
+      const result = await resp.json();
+      const items = svc.parse(result);
+      if (items && items.length) { console.log('[BlogFeed] ✓', svc.name, 'returned', items.length, 'items'); return items; }
+      console.log('[BlogFeed]', svc.name, 'returned no items');
+    } catch(e) { console.log('[BlogFeed]', svc.name, 'error:', e.message); }
+  }
   return null;
 }
 
-// Try to fetch an RSS feed URL using multiple RSS-to-JSON services
-async function tryFetchFeed(feedUrl) {
-  const services = [
-    url => `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(url)}&count=5`,
-    url => `https://www.toptal.com/developers/feed2json/convert?url=${encodeURIComponent(url)}`,
+// Strategy 2: Fetch raw XML via CORS proxy and parse client-side
+async function tryDirectXmlFetch(feedUrl) {
+  const proxies = [
+    { name: 'corsproxy.io', mk: u => `https://corsproxy.io/?${encodeURIComponent(u)}` },
+    { name: 'allorigins', mk: u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}` },
+    { name: 'codetabs', mk: u => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}` },
   ];
-  for (const mkUrl of services) {
+  for (const proxy of proxies) {
     try {
-      const resp = await fetch(mkUrl(feedUrl), {signal: AbortSignal.timeout(8000)});
-      if (!resp.ok) continue;
-      const result = await resp.json();
-      // rss2json format
-      if (result.status === 'ok' && result.items && result.items.length) {
-        return result.items.map(item => ({
-          title: item.title,
-          link: item.link,
-          pubDate: item.pubDate,
-          description: item.description ? item.description.replace(/<[^>]*>/g,'').substring(0,150) : '',
-          thumbnail: item.thumbnail || (item.enclosure && item.enclosure.link) || '',
-        }));
-      }
-      // feed2json format (JSONFeed)
-      if (result.items && result.items.length) {
-        return result.items.map(item => ({
-          title: item.title || '',
-          link: item.url || item.id || '',
-          pubDate: item.date_published || item.date_modified || '',
-          description: (item.content_text || item.summary || '').replace(/<[^>]*>/g,'').substring(0,150),
-          thumbnail: (item.image || item.banner_image || ''),
-        }));
-      }
-    } catch(e) { /* try next service */ }
+      console.log('[BlogFeed] Trying XML via', proxy.name, 'for', feedUrl);
+      const resp = await fetchWithTimeout(proxy.mk(feedUrl), {}, 12000);
+      if (!resp.ok) { console.log('[BlogFeed]', proxy.name, 'HTTP', resp.status); continue; }
+      const text = await resp.text();
+      if (text.length < 200 || !text.includes('<')) { console.log('[BlogFeed]', proxy.name, 'response too short or not XML'); continue; }
+      const items = parseRssXml(text);
+      if (items && items.length) { console.log('[BlogFeed] ✓', proxy.name, 'parsed', items.length, 'items from XML'); return items; }
+      console.log('[BlogFeed]', proxy.name, 'XML parse returned no items');
+    } catch(e) { console.log('[BlogFeed]', proxy.name, 'error:', e.message); }
   }
   return null;
+}
+
+// Try to fetch a feed using all strategies
+async function tryFetchFeed(feedUrl) {
+  // Strategy 1: JSON services (fastest, most reliable if they're up)
+  let items = await tryJsonServices(feedUrl);
+  if (items) return items;
+  // Strategy 2: Raw XML via CORS proxy + client-side parse
+  items = await tryDirectXmlFetch(feedUrl);
+  return items;
 }
 
 async function fetchBlogFeeds() {
@@ -1987,7 +2037,9 @@ async function fetchBlogFeeds() {
   const blogs = data.blogs || [];
   if (!blogs.length) { renderBlogFeed([]); return; }
   blogFeedLoading = true;
+  blogFeedLastError = '';
   renderBlogFeed([]); // show loading state
+  console.log('[BlogFeed] Starting fetch for', blogs.length, 'blog(s)');
   const allItems = [];
   for (const blog of blogs) {
     const base = blog.url.replace(/\/+$/, '');
@@ -1997,41 +2049,88 @@ async function fetchBlogFeeds() {
     const withoutWww = host.startsWith('www.') ? base.replace('://www.', '://') : base;
 
     let fetched = false;
+    // Build feed URL candidates — most WordPress blogs use /feed/
+    const feedPaths = ['/feed/', '/feed', '/rss/', '/rss.xml', '/atom.xml', '/blog/feed/', '/blog/feed'];
+    const candidates = [];
+    for (const path of feedPaths) {
+      candidates.push(withWww + path);
+      if (withoutWww !== withWww) candidates.push(withoutWww + path);
+    }
+    // De-duplicate
+    const feedUrls = [...new Set(candidates)];
 
-    // Step 1: Try auto-discovery from homepage HTML (most reliable)
-    for (const tryUrl of [base, withWww, withoutWww]) {
+    for (const feedUrl of feedUrls) {
       if (fetched) break;
-      const discoveredFeed = await discoverFeedUrl(tryUrl);
-      if (discoveredFeed) {
-        const items = await tryFetchFeed(discoveredFeed);
-        if (items && items.length) {
-          items.forEach(item => allItems.push({ ...item, blogName: blog.name }));
-          fetched = true;
-        }
+      const items = await tryFetchFeed(feedUrl);
+      if (items && items.length) {
+        items.forEach(item => allItems.push({ ...item, blogName: blog.name }));
+        fetched = true;
+        console.log('[BlogFeed] ✓ Found feed for', blog.name, 'at', feedUrl);
       }
     }
-
-    // Step 2: Fall back to guessing common feed paths
     if (!fetched) {
-      const feedUrls = new Set([
-        base + '/feed/', base + '/feed', base + '/rss/', base + '/rss.xml', base + '/atom.xml',
-        withWww + '/feed/', withWww + '/feed', withoutWww + '/feed/', withoutWww + '/feed',
-      ]);
-      for (const feedUrl of feedUrls) {
-        if (fetched) break;
-        const items = await tryFetchFeed(feedUrl);
-        if (items && items.length) {
-          items.forEach(item => allItems.push({ ...item, blogName: blog.name }));
-          fetched = true;
-        }
-      }
+      console.warn('[BlogFeed] ✗ No feed found for', blog.name);
+      blogFeedLastError += (blogFeedLastError ? '; ' : '') + blog.name + ': no feed found';
     }
   }
   // Sort by date (newest first)
   allItems.sort((a,b) => new Date(b.pubDate||0) - new Date(a.pubDate||0));
   blogFeedCache = { items: allItems.slice(0, 15), fetchedAt: Date.now() };
   blogFeedLoading = false;
+  console.log('[BlogFeed] Done.', allItems.length, 'total items');
   renderBlogFeed(blogFeedCache.items);
+}
+
+// Diagnostic: test all services for each blog and report what works
+async function testBlogFeeds() {
+  const el = document.getElementById('blogDiag');
+  if (!el) return;
+  const blogs = data.blogs || [];
+  if (!blogs.length) { el.innerHTML = '<p style="font-size:12px;color:var(--text-secondary);">Add a blog first, then test.</p>'; return; }
+  el.innerHTML = '<p style="font-size:12px;">⏳ Testing feeds... check console for details</p>';
+  let html = '';
+  for (const blog of blogs) {
+    const base = blog.url.replace(/\/+$/, '');
+    let host = ''; try { host = new URL(base).hostname; } catch(e) {}
+    const withWww = host.startsWith('www.') ? base : base.replace('://' + host, '://www.' + host);
+    html += `<div style="margin-top:8px;"><strong style="font-size:12px;">${esc(blog.name)}</strong>`;
+    // Test a few feed URLs with rss2json
+    const testUrls = [withWww + '/feed/', withWww + '/feed', base + '/feed/'];
+    const seen = new Set();
+    for (const feedUrl of testUrls) {
+      if (seen.has(feedUrl)) continue; seen.add(feedUrl);
+      const shortUrl = feedUrl.replace('https://', '');
+      // Test rss2json
+      try {
+        const r = await fetchWithTimeout(`https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(feedUrl)}&count=3`, {}, 10000);
+        const j = await r.json();
+        if (j.status === 'ok' && j.items && j.items.length) {
+          html += `<div style="font-size:11px;color:green;">✅ rss2json + ${esc(shortUrl)}: ${j.items.length} items — "${esc(j.items[0].title)}"</div>`;
+          break;
+        } else {
+          html += `<div style="font-size:11px;color:orange;">⚠️ rss2json + ${esc(shortUrl)}: ${j.message || 'no items'}</div>`;
+        }
+      } catch(e) {
+        html += `<div style="font-size:11px;color:red;">❌ rss2json + ${esc(shortUrl)}: ${e.message}</div>`;
+      }
+      // Test XML via corsproxy
+      try {
+        const r2 = await fetchWithTimeout(`https://corsproxy.io/?${encodeURIComponent(feedUrl)}`, {}, 10000);
+        const txt = await r2.text();
+        const items = parseRssXml(txt);
+        if (items && items.length) {
+          html += `<div style="font-size:11px;color:green;">✅ corsproxy XML + ${esc(shortUrl)}: ${items.length} items — "${esc(items[0].title)}"</div>`;
+          break;
+        } else {
+          html += `<div style="font-size:11px;color:orange;">⚠️ corsproxy XML + ${esc(shortUrl)}: got ${txt.length} bytes but no parseable items</div>`;
+        }
+      } catch(e) {
+        html += `<div style="font-size:11px;color:red;">❌ corsproxy XML + ${esc(shortUrl)}: ${e.message}</div>`;
+      }
+    }
+    html += '</div>';
+  }
+  el.innerHTML = html;
 }
 
 function renderBlogFeed(items) {
@@ -2043,7 +2142,7 @@ function renderBlogFeed(items) {
     // No blogs configured — show hint
     blogHtml += `<div class="card" style="margin-bottom:16px;border-left:4px solid var(--purple);"><h3 style="margin-bottom:4px;">📰 Recipe Blogs</h3><p style="font-size:13px;color:var(--text-secondary);">Add your favorite food blogs in Settings to discover new recipes here!</p></div>`;
   } else if (!items || !items.length) {
-    blogHtml += `<div class="card" style="margin-bottom:16px;border-left:4px solid var(--purple);"><h3 style="margin-bottom:4px;">📰 From Your Blogs</h3><p style="font-size:13px;color:var(--text-secondary);">${blogFeedLoading ? 'Loading...' : 'No posts found. Check your blog URLs in Settings.'}</p></div>`;
+    blogHtml += `<div class="card" style="margin-bottom:16px;border-left:4px solid var(--purple);"><h3 style="margin-bottom:4px;">📰 From Your Blogs</h3><p style="font-size:13px;color:var(--text-secondary);">${blogFeedLoading ? '⏳ Loading feeds...' : 'No posts found.'}</p>${!blogFeedLoading && blogFeedLastError ? '<p style="font-size:11px;color:var(--red);margin-top:4px;">'+esc(blogFeedLastError)+'</p>' : ''}${!blogFeedLoading ? '<p style="font-size:11px;color:var(--text-secondary);margin-top:4px;">Tip: Check browser console for detailed logs. Try popular blogs like pinchofyum.com or budgetbytes.com.</p>' : ''}</div>`;
   } else {
     blogHtml += `<div class="card" style="margin-bottom:16px;border-left:4px solid var(--purple);">`;
     blogHtml += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;"><h3>📰 From Your Blogs</h3><button class="btn btn-sm btn-secondary" onclick="fetchBlogFeeds()" style="font-size:11px;">Refresh</button></div>`;
