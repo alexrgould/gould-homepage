@@ -316,6 +316,20 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
       <h1>Grocery List</h1>
       <button class="btn btn-sm btn-secondary" onclick="uncheckAll()">Reset</button>
     </div>
+    <div id="groceryDateRange" style="margin-bottom:12px;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <label style="font-size:13px;font-weight:600;white-space:nowrap;">Show items from:</label>
+        <input type="date" id="groceryStartDate" style="padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;" onchange="onGroceryDateChange()">
+        <span style="font-size:13px;color:var(--text-secondary);">through</span>
+        <input type="date" id="groceryEndDate" style="padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;" onchange="onGroceryDateChange()">
+      </div>
+      <div style="display:flex;gap:6px;margin-top:8px;">
+        <button class="btn btn-sm btn-secondary" onclick="setGroceryRange('today')">Today onwards</button>
+        <button class="btn btn-sm btn-secondary" onclick="setGroceryRange('thisweek')">This week</button>
+        <button class="btn btn-sm btn-secondary" onclick="setGroceryRange('nextweek')">Next week</button>
+      </div>
+      <div id="groceryRangeInfo" style="font-size:11px;color:var(--text-secondary);margin-top:6px;"></div>
+    </div>
     <div style="display:flex;gap:6px;margin-bottom:16px;">
       <input type="text" id="groceryAddName" placeholder="Add an item..." style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;" onkeydown="if(event.key==='Enter')addGroceryExtra()">
       <select id="groceryAddCat" style="padding:8px 6px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;max-width:120px;">
@@ -569,10 +583,15 @@ function loadLocal() {
 }
 
 // Save to Firebase (debounced)
+let savePending = false;
 function persist() {
   persistLocal();
+  savePending = true;
   if (saveTimer) clearTimeout(saveTimer);
-  saveTimer = setTimeout(saveToFirebase, 600);
+  saveTimer = setTimeout(async () => {
+    await saveToFirebase();
+    savePending = false;
+  }, 600);
 }
 
 async function saveToFirebase() {
@@ -601,6 +620,9 @@ function startListening() {
   if (unsubscribe) unsubscribe();
   unsubscribe = db.collection('families').doc(familyCode).onSnapshot(doc => {
     if (!doc.exists) return;
+    // Skip incoming snapshots while a local save is in flight — prevents race condition
+    // where old remote data overwrites a recent local change before it's been saved
+    if (savePending) { console.log('[Sync] Skipping snapshot — local save pending'); return; }
     const remote = doc.data();
     // Only update if data actually changed (avoid echo from our own save)
     const remoteStr = JSON.stringify({ r: remote.recipes, m: remote.mealPlan, s: remote.staples, c: remote.children, ci: remote.checkedItems, cu: remote.cuisines, uh: remote.usageHistory, dd: remote.doordash, cq: remote.consequences, ge: remote.groceryExtras, bl: remote.blogs });
@@ -2654,23 +2676,116 @@ function autoFillMealPlan() {
 // ===========================================================================
 // GROCERY
 // ===========================================================================
+
+// Grocery date range — defaults to today through next Sunday (always at least 1 full day)
+let groceryStart = new Date(); groceryStart.setHours(0,0,0,0);
+let groceryEnd = (function() { const d = new Date(); d.setHours(0,0,0,0); const day = d.getDay(); const daysToSun = day === 0 ? 7 : 7 - day; d.setDate(d.getDate() + daysToSun); return d; })();
+
+function initGroceryDates() {
+  const startEl = document.getElementById('groceryStartDate');
+  const endEl = document.getElementById('groceryEndDate');
+  if (startEl) startEl.value = dateKey(groceryStart);
+  if (endEl) endEl.value = dateKey(groceryEnd);
+  updateGroceryRangeInfo();
+}
+
+function onGroceryDateChange() {
+  const startEl = document.getElementById('groceryStartDate');
+  const endEl = document.getElementById('groceryEndDate');
+  if (startEl && startEl.value) {
+    const parts = startEl.value.split('-');
+    groceryStart = new Date(+parts[0], +parts[1]-1, +parts[2], 0, 0, 0, 0);
+  }
+  if (endEl && endEl.value) {
+    const parts = endEl.value.split('-');
+    groceryEnd = new Date(+parts[0], +parts[1]-1, +parts[2], 0, 0, 0, 0);
+  }
+  if (groceryEnd < groceryStart) { groceryEnd = new Date(groceryStart); groceryEnd.setDate(groceryEnd.getDate() + 6); endEl.value = dateKey(groceryEnd); }
+  updateGroceryRangeInfo();
+  renderGrocery();
+}
+
+function setGroceryRange(preset) {
+  const today = new Date(); today.setHours(0,0,0,0);
+  if (preset === 'today') {
+    groceryStart = new Date(today);
+    const day = today.getDay();
+    const daysToSun = day === 0 ? 7 : 7 - day;
+    groceryEnd = new Date(today); groceryEnd.setDate(groceryEnd.getDate() + daysToSun);
+  } else if (preset === 'thisweek') {
+    groceryStart = getMonday(today);
+    groceryEnd = new Date(groceryStart); groceryEnd.setDate(groceryEnd.getDate() + 6);
+  } else if (preset === 'nextweek') {
+    groceryStart = getMonday(today); groceryStart.setDate(groceryStart.getDate() + 7);
+    groceryEnd = new Date(groceryStart); groceryEnd.setDate(groceryEnd.getDate() + 6);
+  }
+  document.getElementById('groceryStartDate').value = dateKey(groceryStart);
+  document.getElementById('groceryEndDate').value = dateKey(groceryEnd);
+  updateGroceryRangeInfo();
+  renderGrocery();
+}
+
+function updateGroceryRangeInfo() {
+  const el = document.getElementById('groceryRangeInfo');
+  if (!el) return;
+  // Count how many days and meals are in range
+  const days = Math.round((groceryEnd - groceryStart) / (1000*60*60*24)) + 1;
+  let mealCount = 0;
+  const ddDates = new Set((data.doordash||{orders:[]}).orders.map(o=>o.date));
+  const cursor = new Date(groceryStart);
+  while (cursor <= groceryEnd) {
+    const dk = dateKey(cursor);
+    if (!ddDates.has(dk) && (data.mealPlan[dk]||[]).length) mealCount++;
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  el.textContent = `${days} day${days!==1?'s':''}, ${mealCount} meal${mealCount!==1?'s':''} with ingredients`;
+}
+
 function getGroceryItems() {
-  const items={};
-  const ddDates = new Set((data.doordash||{orders:[]}).orders.map(o=>o.date)); // excludes both DD and eating out days
-  for(let i=0;i<7;i++){const d=new Date(currentWeekStart);d.setDate(d.getDate()+i);const dk=dateKey(d);if(ddDates.has(dk))continue;(data.mealPlan[dk]||[]).forEach(m=>{const r=data.recipes.find(x=>x.id===m.recipeId);if(!r)return;r.ingredients.forEach(ing=>{const key=ing.name.toLowerCase();if(!items[key])items[key]={name:ing.name,quantities:[],category:ing.category};if(ing.quantity)items[key].quantities.push(ing.quantity);});});}
-  (data.staples||[]).forEach(s=>{if(!s.name)return;const key=s.name.toLowerCase();if(!items[key])items[key]={name:s.name,quantities:[],category:s.category||'Other'};if(s.quantity)items[key].quantities.push(s.quantity+' (staple)');});
-  (data.groceryExtras||[]).forEach(x=>{if(!x.name)return;const key=x.name.toLowerCase();if(!items[key])items[key]={name:x.name,quantities:[],category:x.category||'Other',isExtra:true};if(x.quantity)items[key].quantities.push(x.quantity);else items[key].isExtra=true;});
+  const items = {};
+  const ddDates = new Set((data.doordash||{orders:[]}).orders.map(o=>o.date));
+  // Iterate from groceryStart to groceryEnd
+  const cursor = new Date(groceryStart);
+  while (cursor <= groceryEnd) {
+    const dk = dateKey(cursor);
+    if (!ddDates.has(dk)) {
+      (data.mealPlan[dk]||[]).forEach(m => {
+        const r = data.recipes.find(x => x.id === m.recipeId);
+        if (!r) return;
+        r.ingredients.forEach(ing => {
+          const key = ing.name.toLowerCase();
+          if (!items[key]) items[key] = { name: ing.name, quantities: [], category: ing.category };
+          if (ing.quantity) items[key].quantities.push(ing.quantity);
+        });
+      });
+    }
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  (data.staples||[]).forEach(s => { if (!s.name) return; const key = s.name.toLowerCase(); if (!items[key]) items[key] = { name: s.name, quantities: [], category: s.category||'Other' }; if (s.quantity) items[key].quantities.push(s.quantity + ' (staple)'); });
+  (data.groceryExtras||[]).forEach(x => { if (!x.name) return; const key = x.name.toLowerCase(); if (!items[key]) items[key] = { name: x.name, quantities: [], category: x.category||'Other', isExtra: true }; if (x.quantity) items[key].quantities.push(x.quantity); else items[key].isExtra = true; });
   return items;
 }
 
 function renderGrocery() {
-  const items=getGroceryItems();const byCategory={};
-  Object.values(items).forEach(item=>{if(!byCategory[item.category])byCategory[item.category]=[];byCategory[item.category].push(item);});
-  const el=document.getElementById('groceryContent');
-  if(!Object.keys(byCategory).length){el.innerHTML='<div class="empty-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/><path d="M3 6h18M16 10a4 4 0 01-8 0"/></svg><p>Plan some dinners first!</p></div>';return;}
-  let html='';
-  CATEGORIES.forEach(cat=>{const ci=byCategory[cat];if(!ci||!ci.length)return;ci.sort((a,b)=>a.name.localeCompare(b.name));html+=`<div class="grocery-category"><h3>${cat}</h3>`;ci.forEach(item=>{const key=item.name.toLowerCase();const checked=data.checkedItems[key]?'checked':'';html+=`<div class="grocery-item ${checked}" data-key="${esc(key)}" onclick="toggleCheck(this,'${esc(key)}')"><input type="checkbox" ${checked}><span class="item-name">${esc(item.name)}</span><span class="item-qty">${esc(item.quantities.join(', '))}</span>${item.isExtra?`<button onclick="event.stopPropagation();removeGroceryExtra('${esc(key)}')" style="margin-left:auto;background:none;border:none;color:var(--red);font-size:16px;padding:2px 6px;flex-shrink:0;">✕</button>`:''}</div>`;});html+='</div>';});
-  el.innerHTML=html;
+  initGroceryDates();
+  const items = getGroceryItems();
+  const byCategory = {};
+  Object.values(items).forEach(item => { if (!byCategory[item.category]) byCategory[item.category] = []; byCategory[item.category].push(item); });
+  const el = document.getElementById('groceryContent');
+  if (!Object.keys(byCategory).length) { el.innerHTML = '<div class="empty-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/><path d="M3 6h18M16 10a4 4 0 01-8 0"/></svg><p>No meals planned in this range.<br>Adjust the dates or plan some dinners!</p></div>'; return; }
+  let html = '';
+  CATEGORIES.forEach(cat => {
+    const ci = byCategory[cat]; if (!ci || !ci.length) return;
+    ci.sort((a,b) => a.name.localeCompare(b.name));
+    html += `<div class="grocery-category"><h3>${cat}</h3>`;
+    ci.forEach(item => {
+      const key = item.name.toLowerCase();
+      const checked = data.checkedItems[key] ? 'checked' : '';
+      html += `<div class="grocery-item ${checked}" data-key="${esc(key)}" onclick="toggleCheck(this,'${esc(key)}')"><input type="checkbox" ${checked}><span class="item-name">${esc(item.name)}</span><span class="item-qty">${esc(item.quantities.join(', '))}</span>${item.isExtra ? `<button onclick="event.stopPropagation();removeGroceryExtra('${esc(key)}')" style="margin-left:auto;background:none;border:none;color:var(--red);font-size:16px;padding:2px 6px;flex-shrink:0;">✕</button>` : ''}</div>`;
+    });
+    html += '</div>';
+  });
+  el.innerHTML = html;
 }
 
 function toggleCheck(el, key) {
