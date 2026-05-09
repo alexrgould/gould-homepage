@@ -427,6 +427,12 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
     </div>
 
     <div class="card" style="margin-bottom:16px;">
+      <h3 style="margin-bottom:8px;">Parenting Philosophy</h3>
+      <p style="font-size:13px; color:var(--text-secondary); margin-bottom:10px;">Describe your parenting approach and values. Claude will tailor tips and advice to align with your philosophy.</p>
+      <textarea id="parentPhilosophy" placeholder="e.g., We follow gentle/respectful parenting. We try to validate feelings before correcting behavior. We believe in natural consequences over punishment. We want to raise independent, kind humans..." style="width:100%;min-height:100px;padding:10px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;font-family:inherit;resize:vertical;" onchange="saveParentingPhilosophy()"></textarea>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
       <h3 style="margin-bottom:8px;">Cuisine Types</h3>
       <p style="font-size:13px; color:var(--text-secondary); margin-bottom:10px;">Manage cuisine categories for organizing recipes.</p>
       <div id="cuisinesList"></div>
@@ -553,6 +559,21 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
     <div style="display:flex;gap:6px;flex-shrink:0;">
       <input type="text" id="chatInput" placeholder="Ask about recipes, ingredients, meal ideas..." style="flex:1;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChatMessage();}">
       <button class="btn btn-primary" onclick="sendChatMessage()" id="chatSendBtn">Send</button>
+    </div>
+  </div>
+</div>
+
+<!-- PARENTING CHAT -->
+<div class="modal-overlay" id="parentChatModal">
+  <div class="modal" style="height:80vh;display:flex;flex-direction:column;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;flex-shrink:0;">
+      <h2>Parenting Advisor</h2>
+      <button style="background:none; border:none; font-size:24px; color:var(--text-secondary);" onclick="closeParentChatModal()">&times;</button>
+    </div>
+    <div id="parentChatMessages" style="flex:1;overflow-y:auto;margin-bottom:12px;padding:8px;background:var(--bg);border-radius:var(--radius);"></div>
+    <div style="display:flex;gap:6px;flex-shrink:0;">
+      <input type="text" id="parentChatInput" placeholder="Ask about behavior, routines, discipline..." style="flex:1;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendParentChatMessage();}">
+      <button class="btn btn-primary" onclick="sendParentChatMessage()" id="parentChatSendBtn">Send</button>
     </div>
   </div>
 </div>
@@ -786,7 +807,7 @@ function showView(name) {
   if (name === 'plan') renderMealPlan();
   if (name === 'grocery') renderGrocery();
   if (name === 'staples') renderStaples();
-  if (name === 'sync') { renderDoorDashSettings(); updateCalendarSettingsUI(); renderCuisines(); renderSync(); renderKids(); renderBlogsList(); const nk=document.getElementById('nutritionApiKey'); if(nk) nk.value=localStorage.getItem('nutrition_api_key')||''; loadClaudeSettings(); }
+  if (name === 'sync') { renderDoorDashSettings(); updateCalendarSettingsUI(); renderCuisines(); renderSync(); renderKids(); renderBlogsList(); const nk=document.getElementById('nutritionApiKey'); if(nk) nk.value=localStorage.getItem('nutrition_api_key')||''; loadClaudeSettings(); loadParentingPhilosophy(); }
 }
 
 // ===========================================================================
@@ -1589,61 +1610,244 @@ function getChildAge(bdayStr) {
   return { months, years: Math.floor(months/12), remainingMonths: months%12 };
 }
 function ageLabel(age) { if (!age) return ''; return age.months < 24 ? `${age.months} months` : `${age.years} yr${age.remainingMonths ? ' '+age.remainingMonths+' mo':''}`;  }
-
-const TIPS_DB = [
-  {minMonths:12,maxMonths:18,category:'Language',title:'Narrate Everything',body:'Describe what you\'re doing: "I\'m cutting the banana." This builds vocabulary and helps toddlers connect words to actions.'},
-  {minMonths:12,maxMonths:18,category:'Motor Skills',title:'Let Them Stack and Knock Down',body:'Stacking blocks and knocking them over builds coordination and teaches cause and effect. Celebrate the crash!'},
-  {minMonths:12,maxMonths:18,category:'Independence',title:'Offer Two Choices',body:'Instead of open-ended questions, offer two options: "Banana or apple?" This builds autonomy and reduces frustration.'},
-  {minMonths:12,maxMonths:18,category:'Social',title:'Practice Gentle Touch',body:'Model gentle hands with pets, siblings, stuffed animals. Say "gentle" while guiding their hand.'},
-  {minMonths:12,maxMonths:18,category:'Sensory',title:'Explore Textures Together',body:'Playdough, water, paper, sand — sensory play builds neural pathways and helps toddlers make sense of their world.'},
-  {minMonths:12,maxMonths:18,category:'Routine',title:'Create Predictable Transitions',body:'Sing a short song before transitions. Predictability reduces anxiety and tantrums at this age.'},
-  {minMonths:18,maxMonths:24,category:'Language',title:'Expand Their Words',body:'When they say "ball," expand: "Yes, a big red ball!" This models richer language without correcting them.'},
-  {minMonths:18,maxMonths:24,category:'Emotional',title:'Name Their Feelings',body:'Label emotions: "You\'re frustrated because the block fell." They can\'t manage feelings without words for them.'},
-  {minMonths:18,maxMonths:24,category:'Motor Skills',title:'Pouring and Scooping Practice',body:'Pouring water between cups or scooping rice builds fine motor control. A bin with dried pasta works great indoors.'},
-  {minMonths:18,maxMonths:24,category:'Independence',title:'Let Them Try (and Struggle a Bit)',body:'Wait 10-15 seconds before helping. Say "You\'re working so hard on that!" This builds persistence and confidence.'},
-  {minMonths:24,maxMonths:36,category:'Social',title:'Practice Turn-Taking',body:'"My turn, your turn." True sharing is hard until age 3-4, but turn-taking is a concrete skill they can learn now.'},
-  {minMonths:24,maxMonths:36,category:'Language',title:'Ask Open-Ended Questions',body:'Move beyond "What color?" to "What do you think will happen?" This builds critical thinking and longer sentences.'},
-  {minMonths:24,maxMonths:36,category:'Emotional',title:'Create a Calm-Down Spot',body:'A cozy corner with soft things and books. Offer it as a choice, not punishment. This teaches self-regulation.'},
-  {minMonths:36,maxMonths:48,category:'Social',title:'Conflict Resolution Scripts',body:'Teach: "I don\'t like that. Please stop." and "Can I have a turn when you\'re done?" Role-play with stuffed animals.'},
-  {minMonths:36,maxMonths:48,category:'Cognitive',title:'Play "What If" Games',body:'"What if dogs could fly?" builds creative thinking, narrative skills, and is just plain fun.'},
-  {minMonths:36,maxMonths:48,category:'Independence',title:'Give Real Responsibilities',body:'Setting napkins, watering plants, sorting laundry by color. Real jobs build genuine confidence.'},
-  {minMonths:36,maxMonths:48,category:'Emotional',title:'Validate Before Redirecting',body:'"I know you\'re sad we have to leave the park." Children who feel heard recover faster.'},
-  {minMonths:36,maxMonths:48,category:'Literacy',title:'Play With Rhymes',body:'Rhyming games are one of the strongest predictors of reading success. "Cat, bat, hat, sat!"'},
-  {minMonths:36,maxMonths:48,category:'Motor Skills',title:'Scissor Practice is Brain Practice',body:'Child-safe scissors build fine motor strength and bilateral coordination. Start with snipping playdough.'},
-  {minMonths:48,maxMonths:60,category:'Social',title:'Talk About Being a Good Friend',body:'Discuss kindness, sharing, listening. Read books about friendship and discuss characters\' choices.'},
-  {minMonths:48,maxMonths:60,category:'Cognitive',title:'Encourage Productive Struggle',body:'Say "What could you try next?" instead of solving it. Learning to persist is more valuable than the solution.'},
-  {minMonths:48,maxMonths:60,category:'Emotional',title:'Model Your Own Emotions',body:'"I\'m frustrated. I\'m going to take a deep breath." You\'re giving them a living example to follow.'},
-  {minMonths:48,maxMonths:60,category:'Literacy',title:'Let Them "Read" to You',body:'Let them retell stories from pictures. Builds narrative skills and confidence. Ask "Then what happened?"'},
-  {minMonths:48,maxMonths:60,category:'Independence',title:'Involve Them in Meal Planning',body:'Let them pick a dinner, find ingredients at the store, wash vegetables. Ownership over meals reduces pickiness.'},
-  {minMonths:48,maxMonths:60,category:'Cognitive',title:'Board Games Build Big Skills',body:'Turn-taking, counting, strategy, graceful losing. Start with cooperative games before competitive ones.'},
-  {minMonths:0,maxMonths:999,category:'Siblings',title:'Avoid Constant Comparisons',body:'Even positive comparisons create competition. Acknowledge each child individually instead.'},
-  {minMonths:0,maxMonths:999,category:'Siblings',title:'Special One-on-One Time',body:'Even 10-15 minutes of dedicated time fills their attention tank. Let each child pick the activity.'},
-  {minMonths:0,maxMonths:999,category:'Siblings',title:'Teach the Older Child to Be a Helper',body:'"Can you show them how?" builds the older child\'s confidence and creates positive sibling interactions.'},
-  {minMonths:0,maxMonths:999,category:'Family',title:'Family Meals Matter',body:'Eating together is linked to better vocabulary, better grades, and stronger family bonds. Conversation matters more than food.'},
-];
-
-function getTipsForFamily() {
-  const children = data.children || [], tips = [];
-  children.forEach((child, ci) => {
-    if (!child.birthday) return;
-    const age = getChildAge(child.birthday); if (!age) return;
-    TIPS_DB.forEach(tip => { if (age.months >= tip.minMonths && age.months < tip.maxMonths) tips.push({...tip, childName: child.name||('Child '+(ci+1)), childAge: age}); });
-  });
-  const weekNum = Math.floor(Date.now()/(7*24*60*60*1000));
-  tips.sort((a,b) => (hashStr(a.title+weekNum)%10000) - (hashStr(b.title+weekNum)%10000));
-  return tips;
-}
 function hashStr(s) { let h=0; for(let i=0;i<s.length;i++){h=((h<<5)-h)+s.charCodeAt(i);h|=0;} return Math.abs(h); }
 
+// Cached Claude-generated tips
+let _claudeTips = [];
+let _claudeTipsLoading = false;
+
 function renderTip() {
-  const el = document.getElementById('homeTip'), tips = getTipsForFamily();
-  if (!tips.length) {
-    el.innerHTML = !(data.children||[]).some(c=>c.birthday) ? `<div class="tip-card" onclick="showView('sync')"><div class="tip-header"><div class="tip-icon">&#x1F476;</div><div><div class="tip-label">Parenting Tips</div><div class="tip-age">Set up birthdays in Settings to see tips!</div></div></div></div>` : '';
+  const el = document.getElementById('homeTip');
+  const children = data.children || [];
+  const hasKids = children.some(c => c.birthday);
+
+  if (!hasKids) {
+    el.innerHTML = `<div class="tip-card" onclick="showView('sync')"><div class="tip-header"><div class="tip-icon">&#x1F476;</div><div><div class="tip-label">Parenting Tips</div><div class="tip-age">Set up birthdays in Settings to see tips!</div></div></div></div>`;
     return;
   }
-  if (tipIndex>=tips.length) tipIndex=0; if (tipIndex<0) tipIndex=tips.length-1;
-  const tip=tips[tipIndex];
-  el.innerHTML = `<div class="tip-card"><div class="tip-header"><div class="tip-icon">&#x2728;</div><div><div class="tip-label">${esc(tip.category)} &middot; for ${esc(tip.childName)}</div><div class="tip-age">${esc(ageLabel(tip.childAge))} old</div></div></div><div class="tip-title">${esc(tip.title)}</div><div class="tip-body">${esc(tip.body)}</div><div class="tip-nav"><button onclick="tipIndex--;renderTip();">&larr; Prev</button><button onclick="tipIndex++;renderTip();">Next &rarr;</button><span style="flex:1;"></span><span style="font-size:12px;color:var(--text-secondary);align-self:center;">${tipIndex+1}/${tips.length}</span></div></div>`;
+
+  const apiKey = localStorage.getItem('claude_api_key');
+  const proxyUrl = localStorage.getItem('claude_proxy_url');
+  const hasClaude = apiKey && proxyUrl;
+
+  // If we have cached Claude tips, show them
+  if (_claudeTips.length) {
+    if (tipIndex >= _claudeTips.length) tipIndex = 0;
+    if (tipIndex < 0) tipIndex = _claudeTips.length - 1;
+    const tip = _claudeTips[tipIndex];
+    el.innerHTML = `<div class="tip-card" style="border-left:4px solid var(--purple);">
+      <div class="tip-header"><div class="tip-icon">🤖</div><div>
+        <div class="tip-label">${esc(tip.category||'')} · for ${esc(tip.childName||'Family')}</div>
+        <div class="tip-age">AI-personalized</div>
+      </div></div>
+      <div class="tip-title">${esc(tip.title||'')}</div>
+      <div class="tip-body">${esc(tip.body||'')}</div>
+      <div class="tip-nav">
+        <button onclick="tipIndex--;renderTip();">&larr; Prev</button>
+        <button onclick="tipIndex++;renderTip();">Next &rarr;</button>
+        <span style="flex:1;"></span>
+        <button onclick="refreshClaudeTips()" style="border-color:var(--purple);color:var(--purple);" title="Get new tips">&#x1F504; Refresh</button>
+        <span style="font-size:12px;color:var(--text-secondary);align-self:center;margin-left:4px;">${tipIndex+1}/${_claudeTips.length}</span>
+      </div>
+      <div style="margin-top:8px;"><button class="btn btn-sm btn-secondary" onclick="openParentChatModal()" style="font-size:12px;">💬 Ask for more advice</button></div>
+    </div>`;
+    return;
+  }
+
+  // Loading state
+  if (_claudeTipsLoading) {
+    el.innerHTML = `<div class="tip-card" style="border-left:4px solid var(--purple);text-align:center;padding:24px;">
+      <div style="font-size:24px;margin-bottom:8px;">🤖</div>
+      <div style="font-weight:600;margin-bottom:4px;">Generating personalized tips...</div>
+      <div style="font-size:13px;color:var(--text-secondary);">Thinking about your family</div>
+    </div>`;
+    return;
+  }
+
+  // No Claude configured — show a prompt to set it up, or a generate button
+  if (hasClaude) {
+    el.innerHTML = `<div class="tip-card" style="text-align:center;padding:20px;">
+      <div style="font-size:24px;margin-bottom:8px;">✨</div>
+      <div style="font-weight:600;margin-bottom:8px;">Parenting Tips</div>
+      <div style="font-size:13px;color:var(--text-secondary);margin-bottom:12px;">Get AI-personalized tips based on your children's ages and your parenting philosophy.</div>
+      <button class="btn btn-primary" onclick="refreshClaudeTips()" style="font-size:14px;">🤖 Generate Tips</button>
+    </div>`;
+  } else {
+    el.innerHTML = `<div class="tip-card" onclick="showView('sync')" style="cursor:pointer;">
+      <div class="tip-header"><div class="tip-icon">✨</div><div>
+        <div class="tip-label">Parenting Tips</div>
+        <div class="tip-age">Set up Claude AI in Settings to get personalized tips!</div>
+      </div></div>
+    </div>`;
+  }
+}
+
+async function refreshClaudeTips() {
+  const apiKey = localStorage.getItem('claude_api_key');
+  const proxyUrl = localStorage.getItem('claude_proxy_url');
+  if (!apiKey || !proxyUrl) { toast('Set up Claude AI in Settings first'); showView('sync'); return; }
+
+  const children = data.children || [];
+  const kidInfo = children.filter(c => c.name && c.birthday).map(c => {
+    const age = getChildAge(c.birthday);
+    return age ? `${c.name} (${ageLabel(age)})` : c.name;
+  });
+  if (!kidInfo.length) { toast('Add children in Settings first'); return; }
+
+  _claudeTipsLoading = true;
+  tipIndex = 0;
+  renderTip();
+
+  try {
+    const philosophy = localStorage.getItem('parenting_philosophy') || '';
+    const consequences = (data.consequences || []).filter(c => !c.resolved).map(c => `${c.child}: ${c.description} (${c.days} days)`);
+    const recentResolved = (data.consequences || []).filter(c => c.resolved).slice(-5).map(c => `${c.child}: ${c.description}`);
+    const dayName = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+
+    const prompt = `Generate 6 personalized parenting tips for the Gould family today (${dayName}).
+
+Children: ${kidInfo.join(', ')}
+${philosophy ? 'Parenting philosophy: ' + philosophy : ''}
+${consequences.length ? 'Active consequences/challenges: ' + consequences.join('; ') : ''}
+${recentResolved.length ? 'Recently resolved: ' + recentResolved.join('; ') : ''}
+
+Requirements:
+- Tips should be age-appropriate for the specific children listed
+- Mix categories: emotional, language, motor skills, independence, social, cognitive, routine, sibling dynamics
+- If there are active consequences, include 1-2 tips that address those situations
+- Align with the parenting philosophy if provided
+- Each tip should be specific and actionable — include a phrase they can say or activity to try
+- Make them relevant to today (${dayName}) — weekend tips differ from weekday tips
+- Vary the children each tip targets
+
+Reply as a JSON array: [{"category":"short category","title":"short title","body":"2-3 sentence tip","childName":"which child or Family"}]
+Only valid JSON, no markdown fences.`;
+
+    const reply = await callClaude(prompt, {
+      system: 'You are a warm, evidence-based child development advisor. Give practical, specific advice — not generic platitudes. Match the family\'s stated parenting philosophy. Always return valid JSON.',
+      maxTokens: 1200,
+    });
+
+    const cleaned = reply.trim().replace(/```json\n?/g, '').replace(/```/g, '').trim();
+    const tips = JSON.parse(cleaned);
+    if (Array.isArray(tips) && tips.length) {
+      _claudeTips = tips;
+    } else {
+      throw new Error('Invalid response format');
+    }
+  } catch(e) {
+    console.log('[Claude] Tips error:', e.message);
+    toast('Could not generate tips: ' + e.message);
+    _claudeTips = [];
+  }
+  _claudeTipsLoading = false;
+  renderTip();
+}
+
+// ===========================================================================
+// PARENTING PHILOSOPHY
+// ===========================================================================
+function saveParentingPhilosophy() {
+  const val = document.getElementById('parentPhilosophy').value.trim();
+  if (val) localStorage.setItem('parenting_philosophy', val);
+  else localStorage.removeItem('parenting_philosophy');
+  toast('Philosophy saved');
+}
+function loadParentingPhilosophy() {
+  const el = document.getElementById('parentPhilosophy');
+  if (el) el.value = localStorage.getItem('parenting_philosophy') || '';
+}
+
+// (Claude-powered tips are now generated on-demand via refreshClaudeTips() above)
+
+// ===========================================================================
+// PARENTING ADVICE CHAT
+// ===========================================================================
+let parentChatHistory = [];
+
+function openParentChatModal() {
+  const apiKey = localStorage.getItem('claude_api_key');
+  const proxyUrl = localStorage.getItem('claude_proxy_url');
+  if (!apiKey || !proxyUrl) { toast('Set up Claude AI in Settings first'); showView('sync'); return; }
+  document.getElementById('parentChatModal').classList.add('open');
+  if (!parentChatHistory.length) {
+    const consequences = (data.consequences || []).filter(c => !c.resolved);
+    let intro = '<div style="text-align:center;color:var(--text-secondary);font-size:13px;padding:20px;">Ask me anything about parenting! I know your family and your philosophy. Try:<br><br>';
+    if (consequences.length) {
+      intro += `"How should I handle the situation with ${consequences[0].child}?"<br>`;
+      intro += '"Is this consequence effective?"<br>';
+    }
+    intro += '"My toddler won\'t stop hitting"<br>"Tips for bedtime struggles"<br>"How do I handle tantrums in public?"</div>';
+    document.getElementById('parentChatMessages').innerHTML = intro;
+  }
+  document.getElementById('parentChatInput').focus();
+}
+function closeParentChatModal() { document.getElementById('parentChatModal').classList.remove('open'); }
+
+function renderParentChatMessages() {
+  const el = document.getElementById('parentChatMessages');
+  el.innerHTML = parentChatHistory.map(m => {
+    const isUser = m.role === 'user';
+    return `<div style="margin-bottom:12px;display:flex;${isUser ? 'justify-content:flex-end' : 'justify-content:flex-start'};">
+      <div style="max-width:85%;padding:10px 14px;border-radius:${isUser ? '16px 16px 4px 16px' : '16px 16px 16px 4px'};background:${isUser ? 'var(--accent)' : 'var(--surface)'};color:${isUser ? 'white' : 'var(--text)'};font-size:14px;line-height:1.5;white-space:pre-wrap;">${esc(m.content)}</div>
+    </div>`;
+  }).join('');
+  el.scrollTop = el.scrollHeight;
+}
+
+async function sendParentChatMessage() {
+  const input = document.getElementById('parentChatInput');
+  const msg = input.value.trim();
+  if (!msg) return;
+  input.value = '';
+
+  parentChatHistory.push({ role: 'user', content: msg });
+  renderParentChatMessages();
+
+  const el = document.getElementById('parentChatMessages');
+  el.innerHTML += '<div id="parentChatThinking" style="margin-bottom:12px;"><div style="padding:10px 14px;border-radius:16px 16px 16px 4px;background:var(--surface);font-size:13px;color:var(--text-secondary);">Thinking...</div></div>';
+  el.scrollTop = el.scrollHeight;
+  document.getElementById('parentChatSendBtn').disabled = true;
+
+  try {
+    const children = data.children || [];
+    const kidInfo = children.filter(c => c.name && c.birthday).map(c => {
+      const age = getChildAge(c.birthday);
+      return age ? `${c.name} (${ageLabel(age)})` : c.name;
+    });
+    const philosophy = localStorage.getItem('parenting_philosophy') || '';
+    const activeConsequences = (data.consequences || []).filter(c => !c.resolved).map(c => `${c.child}: "${c.description}" — ${c.days} day duration, started ${c.startDate}`);
+    const pastConsequences = (data.consequences || []).filter(c => c.resolved).slice(-10).map(c => `${c.child}: "${c.description}" (resolved)`);
+
+    const system = `You are a warm, evidence-based parenting advisor for the Gould family. Be like a trusted friend who happens to know a lot about child development.
+
+Family:
+${kidInfo.length ? 'Children: ' + kidInfo.join(', ') : 'No children info provided'}
+
+${philosophy ? 'Their parenting philosophy: ' + philosophy + '\n\nIMPORTANT: Always align your advice with this philosophy. Reference it when relevant.' : ''}
+
+${activeConsequences.length ? 'Active consequences:\n' + activeConsequences.join('\n') : ''}
+${pastConsequences.length ? '\nRecent past consequences:\n' + pastConsequences.join('\n') : ''}
+
+Guidelines:
+- Give specific, actionable advice (not generic platitudes)
+- Suggest exact phrases they can say to their child
+- Acknowledge how hard parenting is without being condescending
+- If consequences are active, weave in guidance about whether they're effective
+- Keep responses to 2-3 paragraphs max
+- If they describe a challenging behavior, give both an immediate response strategy AND a longer-term approach`;
+
+    const reply = await callClaude('', {
+      system,
+      messages: parentChatHistory.slice(-10),
+      maxTokens: 800,
+    });
+    parentChatHistory.push({ role: 'assistant', content: reply });
+  } catch(e) {
+    parentChatHistory.push({ role: 'assistant', content: 'Sorry, I hit an error: ' + e.message });
+  }
+  document.getElementById('parentChatSendBtn').disabled = false;
+  renderParentChatMessages();
 }
 
 // ===========================================================================
