@@ -443,8 +443,17 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
         <input type="text" id="claudeApiKey" placeholder="Your Claude API key (sk-ant-...)" style="flex:1; padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-size:13px;" onchange="saveClaudeSettings()">
         <button class="btn btn-secondary btn-sm" onclick="saveClaudeSettings()">Save</button>
       </div>
+      <div style="display:flex; gap:6px; margin-bottom:8px;">
+        <input type="text" id="claudeProxyUrl" placeholder="Proxy URL (required — see docs)" style="flex:1; padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-size:13px;" onchange="saveClaudeSettings()">
+      </div>
       <div style="margin-bottom:6px;">
-        <input type="text" id="claudeProxyUrl" placeholder="Proxy URL (required — see docs)" style="width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-size:13px;" onchange="saveClaudeSettings()">
+        <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px;">Model</label>
+        <select id="claudeModel" style="width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-size:13px;" onchange="saveClaudeSettings()">
+          <option value="claude-haiku-4-5-20251001">Haiku 4.5 — fastest, cheapest</option>
+          <option value="claude-sonnet-4-5-20241022">Sonnet 4.5 — balanced</option>
+          <option value="claude-sonnet-4-6">Sonnet 4.6 — latest balanced</option>
+          <option value="claude-opus-4-6">Opus 4.6 — smartest, most expensive</option>
+        </select>
       </div>
       <p style="font-size:11px; color:var(--text-secondary); margin-top:4px;">The Claude API can't be called directly from a browser. You need a small proxy — <a href="#" onclick="showProxyInstructions();return false;" style="color:var(--blue);">see setup instructions</a>.</p>
       <div id="claudeProxyHelp" style="display:none;margin-top:8px;padding:10px;background:var(--bg);border-radius:var(--radius);font-size:12px;line-height:1.5;"></div>
@@ -2050,16 +2059,20 @@ function saveNutritionKey() {
 function saveClaudeSettings() {
   const key = document.getElementById('claudeApiKey').value.trim();
   const proxy = document.getElementById('claudeProxyUrl').value.trim();
+  const model = document.getElementById('claudeModel').value;
   if (key) localStorage.setItem('claude_api_key', key); else localStorage.removeItem('claude_api_key');
   if (proxy) localStorage.setItem('claude_proxy_url', proxy); else localStorage.removeItem('claude_proxy_url');
+  if (model) localStorage.setItem('claude_model', model);
   toast('Claude settings saved');
 }
 
 function loadClaudeSettings() {
   const keyEl = document.getElementById('claudeApiKey');
   const proxyEl = document.getElementById('claudeProxyUrl');
+  const modelEl = document.getElementById('claudeModel');
   if (keyEl) keyEl.value = localStorage.getItem('claude_api_key') || '';
   if (proxyEl) proxyEl.value = localStorage.getItem('claude_proxy_url') || '';
+  if (modelEl) modelEl.value = localStorage.getItem('claude_model') || 'claude-haiku-4-5-20251001';
 }
 
 function showProxyInstructions() {
@@ -2113,7 +2126,7 @@ async function callClaude(userPrompt, opts = {}) {
   if (!proxyUrl) throw new Error('No proxy URL. Set up a Cloudflare Worker — see Settings.');
 
   const systemPrompt = opts.system || '';
-  const model = opts.model || 'claude-haiku-4-5-20251001';
+  const model = opts.model || localStorage.getItem('claude_model') || 'claude-haiku-4-5-20251001';
   const maxTokens = opts.maxTokens || 1024;
 
   const body = {
