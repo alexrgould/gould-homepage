@@ -281,6 +281,7 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
       <h1>Recipes</h1>
       <div style="display:flex; gap:6px;">
+        <button class="btn btn-secondary btn-sm" onclick="openChatModal()" title="Ask Claude about recipes">💬</button>
         <button class="btn btn-secondary btn-sm" onclick="openUrlImport()">Import URL</button>
         <button class="btn btn-primary btn-sm" onclick="openRecipeModal()">+ Add</button>
       </div>
@@ -302,7 +303,10 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
       <button onclick="changeWeek(1)">Next &rarr;</button>
     </div>
     <div style="margin-bottom:12px;">
-      <button class="btn btn-primary btn-block" onclick="autoFillMealPlan()" style="display:flex;align-items:center;justify-content:center;gap:6px;">✨ Auto-Fill Empty Days</button>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-secondary" onclick="autoFillMealPlan()" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;">🎲 Random Fill</button>
+        <button class="btn btn-primary" onclick="smartMealPlan()" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;">✨ Smart Plan (AI)</button>
+      </div>
     </div>
     <div id="mealPlanDays"></div>
     <div class="btn-row" style="margin-top:16px;">
@@ -433,6 +437,22 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
     </div>
 
     <div class="card" style="margin-bottom:16px;">
+      <h3 style="margin-bottom:8px;">Claude AI</h3>
+      <p style="font-size:13px; color:var(--text-secondary); margin-bottom:10px;">Powers smart meal planning, recipe chat, ingredient swaps, and calendar summaries. Get an API key from <a href="https://console.anthropic.com/" target="_blank" style="color:var(--blue);">console.anthropic.com</a>.</p>
+      <div style="display:flex; gap:6px; margin-bottom:8px;">
+        <input type="text" id="claudeApiKey" placeholder="Your Claude API key (sk-ant-...)" style="flex:1; padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-size:13px;" onchange="saveClaudeSettings()">
+        <button class="btn btn-secondary btn-sm" onclick="saveClaudeSettings()">Save</button>
+      </div>
+      <div style="margin-bottom:6px;">
+        <input type="text" id="claudeProxyUrl" placeholder="Proxy URL (required — see docs)" style="width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-size:13px;" onchange="saveClaudeSettings()">
+      </div>
+      <p style="font-size:11px; color:var(--text-secondary); margin-top:4px;">The Claude API can't be called directly from a browser. You need a small proxy — <a href="#" onclick="showProxyInstructions();return false;" style="color:var(--blue);">see setup instructions</a>.</p>
+      <div id="claudeProxyHelp" style="display:none;margin-top:8px;padding:10px;background:var(--bg);border-radius:var(--radius);font-size:12px;line-height:1.5;"></div>
+      <div id="claudeStatus" style="margin-top:6px;"></div>
+      <button class="btn btn-secondary btn-sm" style="margin-top:6px;font-size:11px;" onclick="testClaudeConnection()">🔌 Test Connection</button>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
       <h3 style="margin-bottom:8px;">Nutrition Estimates</h3>
       <p style="font-size:13px; color:var(--text-secondary); margin-bottom:10px;">Get a free API key from <a href="https://fdc.nal.usda.gov/api-key-signup/" target="_blank" style="color:var(--blue);">USDA FoodData Central</a> — just enter your email and you'll get a key instantly. No account needed.</p>
       <div style="display:flex; gap:6px;">
@@ -510,6 +530,32 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
     <div class="form-group"><label>Recipe URL</label><input type="url" id="importUrl" placeholder="https://www.allrecipes.com/recipe/..."></div>
     <div class="import-status" id="importStatus"></div>
     <button class="btn btn-primary btn-block" onclick="importFromUrl()" id="importBtn">Import Recipe</button>
+  </div>
+</div>
+
+<!-- RECIPE CHAT -->
+<div class="modal-overlay" id="chatModal">
+  <div class="modal" style="height:80vh;display:flex;flex-direction:column;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;flex-shrink:0;">
+      <h2>Recipe Assistant</h2>
+      <button style="background:none; border:none; font-size:24px; color:var(--text-secondary);" onclick="closeChatModal()">&times;</button>
+    </div>
+    <div id="chatMessages" style="flex:1;overflow-y:auto;margin-bottom:12px;padding:8px;background:var(--bg);border-radius:var(--radius);"></div>
+    <div style="display:flex;gap:6px;flex-shrink:0;">
+      <input type="text" id="chatInput" placeholder="Ask about recipes, ingredients, meal ideas..." style="flex:1;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChatMessage();}">
+      <button class="btn btn-primary" onclick="sendChatMessage()" id="chatSendBtn">Send</button>
+    </div>
+  </div>
+</div>
+
+<!-- INGREDIENT SUBSTITUTION -->
+<div class="modal-overlay" id="subModal">
+  <div class="modal">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+      <h2>Ingredient Swap</h2>
+      <button style="background:none; border:none; font-size:24px; color:var(--text-secondary);" onclick="closeSubModal()">&times;</button>
+    </div>
+    <div id="subContent" style="font-size:14px;line-height:1.6;"></div>
   </div>
 </div>
 
@@ -731,7 +777,7 @@ function showView(name) {
   if (name === 'plan') renderMealPlan();
   if (name === 'grocery') renderGrocery();
   if (name === 'staples') renderStaples();
-  if (name === 'sync') { renderDoorDashSettings(); updateCalendarSettingsUI(); renderCuisines(); renderSync(); renderKids(); renderBlogsList(); const nk=document.getElementById('nutritionApiKey'); if(nk) nk.value=localStorage.getItem('nutrition_api_key')||''; }
+  if (name === 'sync') { renderDoorDashSettings(); updateCalendarSettingsUI(); renderCuisines(); renderSync(); renderKids(); renderBlogsList(); const nk=document.getElementById('nutritionApiKey'); if(nk) nk.value=localStorage.getItem('nutrition_api_key')||''; loadClaudeSettings(); }
 }
 
 // ===========================================================================
@@ -1151,6 +1197,90 @@ function renderCalendarSummary() {
   html += `</div>`;
 
   el.innerHTML = html;
+
+  // Enhance summaries with Claude (async, replaces static text when ready)
+  enhanceCalendarWithClaude(thisWeekEvents, nextWeekEvents, today, thisSunday, nextMonday, nextSunday);
+}
+
+let _calClaudeCache = {};
+async function enhanceCalendarWithClaude(twEvents, nwEvents, today, thisSunday, nextMonday, nextSunday) {
+  const apiKey = localStorage.getItem('claude_api_key');
+  const proxyUrl = localStorage.getItem('claude_proxy_url');
+  if (!apiKey || !proxyUrl) return;
+
+  // Cache key based on date + event count to avoid re-fetching on every render
+  const cacheKey = dateKey(today) + '_' + twEvents.length + '_' + nwEvents.length;
+  if (_calClaudeCache[cacheKey]) {
+    applyClaudeSummaries(_calClaudeCache[cacheKey]);
+    return;
+  }
+
+  // Only try once per session per cache key
+  if (_calClaudeCache[cacheKey + '_tried']) return;
+  _calClaudeCache[cacheKey + '_tried'] = true;
+
+  function formatEvents(events) {
+    return events.map(ev => {
+      const d = ev.allDay || ev.start.length === 10 ? ev.start : new Date(ev.start).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+      const time = ev.allDay ? 'all day' : new Date(ev.start).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      return `${d}: ${ev.title} (${time})${ev.location ? ' at ' + ev.location : ''}`;
+    }).join('\n');
+  }
+
+  const twFormatted = formatEvents(twEvents);
+  const nwFormatted = formatEvents(nwEvents);
+  if (!twFormatted && !nwFormatted) return;
+
+  const kidAges = (data.children || []).map(c => {
+    const age = getChildAge(c.birthday);
+    return c.name + (age !== null ? ' (' + Math.floor(age/12) + 'y' + (age%12) + 'm)' : '');
+  }).join(', ');
+
+  try {
+    const prompt = `Write two brief family calendar summaries and one parenting tip.
+
+THIS WEEK events (${dateKey(today)} to ${dateKey(thisSunday)}):
+${twFormatted || '(nothing scheduled)'}
+
+NEXT WEEK events (${dateKey(nextMonday)} to ${dateKey(nextSunday)}):
+${nwFormatted || '(nothing scheduled)'}
+
+${kidAges ? 'Kids: ' + kidAges : ''}
+
+Reply as JSON: {"thisWeek":"2-3 sentence summary of this week, warm and practical","nextWeek":"2-3 sentence summary with a touch of inspiration","tip":"one actionable parenting tip related to the week's schedule"}
+Only JSON, no markdown.`;
+
+    const reply = await callClaude(prompt, {
+      system: 'You are a warm, encouraging family assistant. Write like a supportive friend, not a robot. Be specific to their actual events. Keep each field under 50 words.',
+      maxTokens: 400,
+    });
+
+    const cleaned = reply.trim().replace(/```json\n?/g, '').replace(/```/g, '').trim();
+    const summaries = JSON.parse(cleaned);
+    _calClaudeCache[cacheKey] = summaries;
+    applyClaudeSummaries(summaries);
+  } catch(e) {
+    console.log('[Claude] Calendar enhance error:', e.message);
+  }
+}
+
+function applyClaudeSummaries(summaries) {
+  const el = document.getElementById('homeCalendar');
+  if (!el) return;
+  // Find and replace the summary paragraphs
+  const cards = el.querySelectorAll('.card');
+  if (cards[0] && summaries.thisWeek) {
+    const p = cards[0].querySelector('p');
+    if (p) p.textContent = summaries.thisWeek;
+  }
+  if (cards[1] && summaries.nextWeek) {
+    const p = cards[1].querySelector('p');
+    if (p) p.textContent = summaries.nextWeek;
+  }
+  if (cards[2] && summaries.tip) {
+    const p = cards[2].querySelector('p');
+    if (p) p.textContent = summaries.tip;
+  }
 }
 
 // ===========================================================================
@@ -1641,7 +1771,17 @@ function showRecipeDetail(id) {
   }
   if (r.url) html += `<p style="margin-bottom:12px;"><a href="${esc(r.url)}" target="_blank" style="color:var(--blue);font-size:14px;">View original recipe &rarr;</a></p>`;
   html += '<h3 style="margin-bottom:8px;">Ingredients</h3>';
-  if (r.ingredients.length) { html += '<ul style="padding-left:18px;margin-bottom:16px;">'; r.ingredients.forEach(i => { html += `<li style="margin-bottom:4px;font-size:15px;">${esc(i.quantity?i.quantity+' ':'')}${esc(i.name)} <span style="color:var(--text-secondary);font-size:12px;">${esc(i.category)}</span></li>`; }); html += '</ul>'; }
+  if (r.ingredients.length) {
+    const hasClaudeKey = !!localStorage.getItem('claude_api_key') && !!localStorage.getItem('claude_proxy_url');
+    html += '<ul style="padding-left:18px;margin-bottom:16px;">';
+    r.ingredients.forEach((ing, idx) => {
+      html += `<li style="margin-bottom:4px;font-size:15px;display:flex;align-items:center;gap:6px;">`;
+      html += `<span>${esc(ing.quantity?ing.quantity+' ':'')}${esc(ing.name)} <span style="color:var(--text-secondary);font-size:12px;">${esc(ing.category)}</span></span>`;
+      if (hasClaudeKey) html += `<button onclick="event.stopPropagation();suggestSubstitution('${esc(ing.name).replace(/'/g,"\\'")}','${esc(r.name).replace(/'/g,"\\'")}')" style="background:none;border:none;font-size:11px;color:var(--blue);cursor:pointer;padding:1px 4px;white-space:nowrap;" title="Find a swap">🔄 swap</button>`;
+      html += `</li>`;
+    });
+    html += '</ul>';
+  }
   if (r.notes) { html += '<h3 style="margin-bottom:8px;">Notes</h3>'; html += `<p style="font-size:15px;white-space:pre-wrap;color:var(--text-secondary);">${esc(r.notes)}</p>`; }
 
   // Ratings
@@ -1900,6 +2040,363 @@ function saveNutritionKey() {
   } else {
     localStorage.removeItem('nutrition_api_key');
     toast('API key removed');
+  }
+}
+
+// ===========================================================================
+// CLAUDE AI INTEGRATION
+// ===========================================================================
+
+function saveClaudeSettings() {
+  const key = document.getElementById('claudeApiKey').value.trim();
+  const proxy = document.getElementById('claudeProxyUrl').value.trim();
+  if (key) localStorage.setItem('claude_api_key', key); else localStorage.removeItem('claude_api_key');
+  if (proxy) localStorage.setItem('claude_proxy_url', proxy); else localStorage.removeItem('claude_proxy_url');
+  toast('Claude settings saved');
+}
+
+function loadClaudeSettings() {
+  const keyEl = document.getElementById('claudeApiKey');
+  const proxyEl = document.getElementById('claudeProxyUrl');
+  if (keyEl) keyEl.value = localStorage.getItem('claude_api_key') || '';
+  if (proxyEl) proxyEl.value = localStorage.getItem('claude_proxy_url') || '';
+}
+
+function showProxyInstructions() {
+  const el = document.getElementById('claudeProxyHelp');
+  if (el.style.display !== 'none') { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  el.innerHTML = `<strong>Free Cloudflare Worker Setup (2 min):</strong><br>
+1. Go to <a href="https://dash.cloudflare.com/" target="_blank" style="color:var(--blue);">dash.cloudflare.com</a> and create a free account<br>
+2. Go to Workers & Pages → Create → "Hello World" template<br>
+3. Replace the code with the proxy code below, then click Deploy<br>
+4. Copy the worker URL (e.g. <code>https://my-proxy.username.workers.dev</code>) into the Proxy URL field above<br><br>
+<strong>Worker code:</strong><br>
+<pre style="background:var(--surface);padding:8px;border-radius:4px;font-size:11px;overflow-x:auto;white-space:pre-wrap;border:1px solid var(--border);">export default {
+  async fetch(request) {
+    if (request.method === 'OPTIONS') {
+      return new Response(null, {
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'POST',
+          'Access-Control-Allow-Headers': 'Content-Type, x-api-key, anthropic-version',
+        }
+      });
+    }
+    const body = await request.text();
+    const apiKey = request.headers.get('x-api-key');
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body
+    });
+    const data = await resp.text();
+    return new Response(data, {
+      status: resp.status,
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+      }
+    });
+  }
+};</pre>`;
+}
+
+async function callClaude(userPrompt, opts = {}) {
+  const apiKey = localStorage.getItem('claude_api_key');
+  const proxyUrl = localStorage.getItem('claude_proxy_url');
+  if (!apiKey) throw new Error('No Claude API key. Add it in Settings.');
+  if (!proxyUrl) throw new Error('No proxy URL. Set up a Cloudflare Worker — see Settings.');
+
+  const systemPrompt = opts.system || '';
+  const model = opts.model || 'claude-haiku-4-5-20251001';
+  const maxTokens = opts.maxTokens || 1024;
+
+  const body = {
+    model,
+    max_tokens: maxTokens,
+    messages: opts.messages || [{ role: 'user', content: userPrompt }],
+  };
+  if (systemPrompt) body.system = systemPrompt;
+
+  const resp = await fetchWithTimeout(proxyUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify(body),
+  }, 30000);
+
+  if (!resp.ok) {
+    const errText = await resp.text().catch(() => '');
+    if (resp.status === 401) throw new Error('Invalid Claude API key. Check Settings.');
+    if (resp.status === 429) throw new Error('Rate limited. Wait a moment and try again.');
+    throw new Error('Claude API error: ' + resp.status + ' ' + errText.substring(0, 100));
+  }
+  const result = await resp.json();
+  if (result.content && result.content[0]) return result.content[0].text;
+  throw new Error('Unexpected response from Claude');
+}
+
+async function testClaudeConnection() {
+  const el = document.getElementById('claudeStatus');
+  el.innerHTML = '<span style="font-size:12px;color:var(--text-secondary);">Testing...</span>';
+  try {
+    const reply = await callClaude('Reply with exactly: "Connected!" and nothing else.');
+    el.innerHTML = '<span style="font-size:12px;color:var(--green);">✅ ' + esc(reply.trim()) + '</span>';
+  } catch(e) {
+    el.innerHTML = '<span style="font-size:12px;color:var(--red);">❌ ' + esc(e.message) + '</span>';
+  }
+}
+
+// --- SMART MEAL PLANNING ---
+async function smartMealPlan() {
+  const apiKey = localStorage.getItem('claude_api_key');
+  const proxyUrl = localStorage.getItem('claude_proxy_url');
+  if (!apiKey || !proxyUrl) { toast('Set up Claude AI in Settings first'); showView('sync'); return; }
+
+  // Gather context
+  const emptyDays = [];
+  const ddOrders = (data.doordash || { orders: [] }).orders;
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(currentWeekStart); d.setDate(d.getDate() + i);
+    const dk = dateKey(d);
+    const hasRecipe = (data.mealPlan[dk] || []).length > 0;
+    const hasDD = ddOrders.find(o => o.date === dk);
+    if (!hasRecipe && !hasDD) emptyDays.push({ dk, dayName: d.toLocaleDateString('en-US', { weekday: 'long' }) });
+  }
+  if (!emptyDays.length) { toast('All days are planned!'); return; }
+  if (!data.recipes.length) { toast('Add some recipes first'); return; }
+
+  const recipeList = data.recipes.map(r => `- ${r.name} (${r.cuisine || 'No cuisine'})${r.ratings && r.ratings.length ? ' [rated ' + (r.ratings.reduce((s,x)=>s+x.stars,0)/r.ratings.length).toFixed(1) + '/5]' : ''}`).join('\n');
+  const recentMeals = (data.usageHistory || []).slice(-14).map(u => { const r = data.recipes.find(x=>x.id===u.recipeId); return r ? r.name : ''; }).filter(Boolean);
+  const kidAges = (data.children || []).map(c => { const age = getChildAge(c.birthday); return c.name + (age !== null ? ' ('+age+' months)' : ''); }).join(', ');
+  const month = new Date().toLocaleDateString('en-US', { month: 'long' });
+
+  const btn = document.querySelector('[onclick="smartMealPlan()"]');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Thinking...'; }
+
+  try {
+    const prompt = `Pick meals for these empty days: ${emptyDays.map(d => d.dayName + ' (' + d.dk + ')').join(', ')}.
+
+Available recipes:
+${recipeList}
+
+${recentMeals.length ? 'Recently cooked (avoid repeating): ' + recentMeals.join(', ') : ''}
+${kidAges ? 'Kids in family: ' + kidAges : ''}
+Month: ${month}
+
+Rules:
+- ONLY pick from the available recipes list above — use exact names
+- Vary cuisines across the week
+- Prefer higher-rated recipes
+- Consider the season (${month}) for comfort vs lighter meals
+- If there are young kids, favor kid-friendly options
+
+Reply with ONLY a JSON array like: [{"dk":"2025-03-12","recipe":"Exact Recipe Name"}]
+No other text.`;
+
+    const reply = await callClaude(prompt, {
+      system: 'You are a family meal planning assistant. Reply with ONLY valid JSON, no markdown, no explanation.',
+      maxTokens: 512,
+    });
+
+    // Parse the JSON response
+    let picks;
+    try {
+      const cleaned = reply.trim().replace(/```json\n?/g, '').replace(/```/g, '').trim();
+      picks = JSON.parse(cleaned);
+    } catch(e) { throw new Error('Claude returned an unexpected format. Try again.'); }
+
+    let filled = 0;
+    for (const pick of picks) {
+      const recipe = data.recipes.find(r => r.name.toLowerCase() === pick.recipe.toLowerCase());
+      if (recipe && emptyDays.find(d => d.dk === pick.dk)) {
+        data.mealPlan[pick.dk] = [{ meal: 'dinner', recipeId: recipe.id }];
+        if (!data.usageHistory) data.usageHistory = [];
+        data.usageHistory.push({ recipeId: recipe.id, date: pick.dk, added: Date.now() });
+        filled++;
+      }
+    }
+    if (filled) {
+      persist(); renderMealPlan();
+      toast(`Claude planned ${filled} meal${filled > 1 ? 's' : ''}!`);
+    } else {
+      toast('No matches found — try again or use Random Fill');
+    }
+  } catch(e) {
+    toast(e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '✨ Smart Plan (AI)'; }
+  }
+}
+
+// --- RECIPE CHAT ASSISTANT ---
+let chatHistory = [];
+
+function openChatModal() {
+  const apiKey = localStorage.getItem('claude_api_key');
+  const proxyUrl = localStorage.getItem('claude_proxy_url');
+  if (!apiKey || !proxyUrl) { toast('Set up Claude AI in Settings first'); showView('sync'); return; }
+  document.getElementById('chatModal').classList.add('open');
+  if (!chatHistory.length) {
+    document.getElementById('chatMessages').innerHTML = '<div style="text-align:center;color:var(--text-secondary);font-size:13px;padding:20px;">Ask me anything about cooking! Try:<br><br>"What can I make with chicken and broccoli?"<br>"Suggest a quick weeknight dinner"<br>"What goes well with salmon?"</div>';
+  }
+  document.getElementById('chatInput').focus();
+}
+function closeChatModal() { document.getElementById('chatModal').classList.remove('open'); }
+
+function renderChatMessages() {
+  const el = document.getElementById('chatMessages');
+  el.innerHTML = chatHistory.map(m => {
+    const isUser = m.role === 'user';
+    return `<div style="margin-bottom:12px;display:flex;${isUser ? 'justify-content:flex-end' : 'justify-content:flex-start'};">
+      <div style="max-width:85%;padding:10px 14px;border-radius:${isUser ? '16px 16px 4px 16px' : '16px 16px 16px 4px'};background:${isUser ? 'var(--accent)' : 'var(--surface)'};color:${isUser ? 'white' : 'var(--text)'};font-size:14px;line-height:1.5;white-space:pre-wrap;">${esc(m.content)}</div>
+    </div>`;
+  }).join('');
+  el.scrollTop = el.scrollHeight;
+}
+
+async function sendChatMessage() {
+  const input = document.getElementById('chatInput');
+  const msg = input.value.trim();
+  if (!msg) return;
+  input.value = '';
+
+  chatHistory.push({ role: 'user', content: msg });
+  renderChatMessages();
+
+  // Add thinking indicator
+  const el = document.getElementById('chatMessages');
+  el.innerHTML += '<div id="chatThinking" style="margin-bottom:12px;"><div style="padding:10px 14px;border-radius:16px 16px 16px 4px;background:var(--surface);font-size:13px;color:var(--text-secondary);">Thinking...</div></div>';
+  el.scrollTop = el.scrollHeight;
+  document.getElementById('chatSendBtn').disabled = true;
+
+  try {
+    const recipeContext = data.recipes.slice(0, 30).map(r => `${r.name} (${r.cuisine || '?'}) — ${r.ingredients.map(i=>i.name).join(', ')}`).join('\n');
+    const system = `You are a helpful family cooking assistant for the Gould family. Be concise and friendly.
+
+The family's recipe book includes:
+${recipeContext}
+
+When suggesting recipes from their book, mention them by name. You can also suggest new recipe ideas they don't have yet. Keep responses short — 2-3 paragraphs max.`;
+
+    const reply = await callClaude('', {
+      system,
+      messages: chatHistory.slice(-10), // last 10 messages for context
+      maxTokens: 800,
+    });
+    chatHistory.push({ role: 'assistant', content: reply });
+  } catch(e) {
+    chatHistory.push({ role: 'assistant', content: 'Sorry, I hit an error: ' + e.message });
+  }
+  document.getElementById('chatSendBtn').disabled = false;
+  renderChatMessages();
+}
+
+// --- INGREDIENT SUBSTITUTIONS ---
+function closeSubModal() { document.getElementById('subModal').classList.remove('open'); }
+
+let _currentSubRecipe = '';
+let _currentSubIngredient = '';
+
+async function suggestSubstitution(ingredientName, recipeName) {
+  const apiKey = localStorage.getItem('claude_api_key');
+  const proxyUrl = localStorage.getItem('claude_proxy_url');
+  if (!apiKey || !proxyUrl) { toast('Set up Claude AI in Settings first'); return; }
+
+  _currentSubRecipe = recipeName;
+  _currentSubIngredient = ingredientName;
+
+  document.getElementById('subModal').classList.add('open');
+  document.getElementById('subContent').innerHTML = `<p style="color:var(--text-secondary);">Finding swaps for <strong>${esc(ingredientName)}</strong>...</p>`;
+
+  try {
+    const kidAges = (data.children || []).map(c => c.name).join(', ');
+    const prompt = `Suggest 3-4 substitutions for "${ingredientName}" in the recipe "${recipeName}".
+${kidAges ? 'This is for a family with kids (' + kidAges + '), so note any kid-friendliness.' : ''}
+
+Reply ONLY as JSON array: [{"name":"substitute name","note":"brief note on how to use it and how it changes the dish"}]
+No markdown, no explanation, just JSON.`;
+
+    const reply = await callClaude(prompt, {
+      system: 'You are a helpful cooking assistant. Reply with ONLY valid JSON.',
+      maxTokens: 500,
+    });
+
+    const cleaned = reply.trim().replace(/```json\n?/g, '').replace(/```/g, '').trim();
+    let subs;
+    try { subs = JSON.parse(cleaned); } catch(e) {
+      // Fallback: show as text
+      document.getElementById('subContent').innerHTML = `<h3 style="margin-bottom:8px;">Swaps for: ${esc(ingredientName)}</h3><div style="white-space:pre-wrap;">${esc(reply)}</div>`;
+      return;
+    }
+
+    let html = `<h3 style="margin-bottom:12px;">Swaps for: ${esc(ingredientName)}</h3>`;
+    subs.forEach((sub, i) => {
+      html += `<div style="padding:10px;background:var(--bg);border-radius:var(--radius);margin-bottom:8px;display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">`;
+      html += `<div><strong style="font-size:14px;">${esc(sub.name)}</strong><div style="font-size:12px;color:var(--text-secondary);margin-top:2px;">${esc(sub.note || '')}</div></div>`;
+      html += `<button class="btn btn-sm btn-primary" onclick="applySubstitution('${esc(sub.name).replace(/'/g,"\\'")}')">Use this</button>`;
+      html += `</div>`;
+    });
+    html += `<p style="font-size:11px;color:var(--text-secondary);margin-top:8px;">Clicking "Use this" will update the recipe and your grocery list.</p>`;
+    document.getElementById('subContent').innerHTML = html;
+  } catch(e) {
+    document.getElementById('subContent').innerHTML = `<p style="color:var(--red);">${esc(e.message)}</p>`;
+  }
+}
+
+function applySubstitution(newIngredientName) {
+  // Find recipe and ingredient, swap the name
+  const recipe = data.recipes.find(r => r.name === _currentSubRecipe);
+  if (!recipe) { toast('Recipe not found'); return; }
+  const ing = recipe.ingredients.find(i => i.name.toLowerCase() === _currentSubIngredient.toLowerCase());
+  if (!ing) { toast('Ingredient not found'); return; }
+  const oldName = ing.name;
+  ing.name = newIngredientName;
+  persist();
+  closeSubModal();
+  // Re-render the recipe detail to show updated ingredient
+  if (currentDetailId) showRecipeDetail(currentDetailId);
+  toast(`Swapped "${oldName}" → "${newIngredientName}"`);
+}
+
+// --- CLAUDE CALENDAR SUMMARIES ---
+async function generateCalendarSummary(events, weekLabel) {
+  const apiKey = localStorage.getItem('claude_api_key');
+  const proxyUrl = localStorage.getItem('claude_proxy_url');
+  if (!apiKey || !proxyUrl) return null;
+
+  const kidAges = (data.children || []).map(c => {
+    const age = getChildAge(c.birthday);
+    return c.name + (age !== null ? ' (' + Math.floor(age/12) + ' years)' : '');
+  }).join(', ');
+
+  const eventList = events.map(e => `${e.date}: ${e.title}${e.time ? ' at ' + e.time : ' (all day)'}`).join('\n');
+  if (!eventList) return null;
+
+  const prompt = `Here are the family's calendar events for ${weekLabel}:
+
+${eventList}
+
+${kidAges ? 'Family kids: ' + kidAges : ''}
+
+Write a warm, concise 2-3 sentence summary of the week. Mention any highlights or things to prepare for. Add a small practical parenting or family tip related to the schedule. Keep it casual and encouraging.`;
+
+  try {
+    return await callClaude(prompt, {
+      system: 'You are a warm family assistant. Be concise, practical, and encouraging. No bullet points — flowing sentences only.',
+      maxTokens: 250,
+    });
+  } catch(e) {
+    console.log('[Claude] Calendar summary error:', e.message);
+    return null;
   }
 }
 
