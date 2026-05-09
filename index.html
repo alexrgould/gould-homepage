@@ -127,6 +127,7 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
 .tip-card .tip-body { font-size: 14px; color: var(--text-secondary); line-height: 1.5; }
 .tip-card .tip-nav { display: flex; gap: 8px; margin-top: 12px; }
 .tip-card .tip-nav button { padding: 6px 14px; border-radius: 6px; border: 1px solid #ccc0e0; background: white; font-size: 13px; font-weight: 600; color: var(--purple); }
+.claude-model-select { width:100%; padding:6px 8px; border:1px solid var(--border); border-radius:var(--radius); font-size:12px; background:white; }
 
 /* IMPORT STATUS */
 .import-status { padding: 10px 14px; border-radius: 8px; margin-bottom: 12px; font-size: 13px; display: none; }
@@ -453,13 +454,63 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
         <input type="text" id="claudeProxyUrl" placeholder="Proxy URL (required — see docs)" style="flex:1; padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-size:13px;" onchange="saveClaudeSettings()">
       </div>
       <div style="margin-bottom:6px;">
-        <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px;">Model</label>
-        <select id="claudeModel" style="width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-size:13px;" onchange="saveClaudeSettings()">
-          <option value="claude-haiku-4-5-20251001">Haiku 4.5 — fastest, cheapest</option>
-          <option value="claude-sonnet-4-5-20241022">Sonnet 4.5 — balanced</option>
-          <option value="claude-sonnet-4-6">Sonnet 4.6 — latest balanced</option>
-          <option value="claude-opus-4-6">Opus 4.6 — smartest, most expensive</option>
-        </select>
+        <label style="font-size:12px;font-weight:600;display:block;margin-bottom:6px;">Models per Feature</label>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px;">
+          <div>
+            <label style="color:var(--text-secondary);display:block;margin-bottom:2px;">Meal Planning</label>
+            <select id="claudeModel_mealplan" class="claude-model-select" onchange="saveClaudeSettings()">
+              <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
+              <option value="claude-sonnet-4-5-20241022">Sonnet 4.5</option>
+              <option value="claude-sonnet-4-6" selected>Sonnet 4.6</option>
+              <option value="claude-opus-4-6">Opus 4.6</option>
+            </select>
+          </div>
+          <div>
+            <label style="color:var(--text-secondary);display:block;margin-bottom:2px;">Recipe Chat</label>
+            <select id="claudeModel_recipechat" class="claude-model-select" onchange="saveClaudeSettings()">
+              <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
+              <option value="claude-sonnet-4-5-20241022">Sonnet 4.5</option>
+              <option value="claude-sonnet-4-6" selected>Sonnet 4.6</option>
+              <option value="claude-opus-4-6">Opus 4.6</option>
+            </select>
+          </div>
+          <div>
+            <label style="color:var(--text-secondary);display:block;margin-bottom:2px;">Substitutions</label>
+            <select id="claudeModel_substitutions" class="claude-model-select" onchange="saveClaudeSettings()">
+              <option value="claude-haiku-4-5-20251001" selected>Haiku 4.5</option>
+              <option value="claude-sonnet-4-5-20241022">Sonnet 4.5</option>
+              <option value="claude-sonnet-4-6">Sonnet 4.6</option>
+              <option value="claude-opus-4-6">Opus 4.6</option>
+            </select>
+          </div>
+          <div>
+            <label style="color:var(--text-secondary);display:block;margin-bottom:2px;">Calendar Summary</label>
+            <select id="claudeModel_calendar" class="claude-model-select" onchange="saveClaudeSettings()">
+              <option value="claude-haiku-4-5-20251001" selected>Haiku 4.5</option>
+              <option value="claude-sonnet-4-5-20241022">Sonnet 4.5</option>
+              <option value="claude-sonnet-4-6">Sonnet 4.6</option>
+              <option value="claude-opus-4-6">Opus 4.6</option>
+            </select>
+          </div>
+          <div>
+            <label style="color:var(--text-secondary);display:block;margin-bottom:2px;">Parenting Tips</label>
+            <select id="claudeModel_tips" class="claude-model-select" onchange="saveClaudeSettings()">
+              <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
+              <option value="claude-sonnet-4-5-20241022">Sonnet 4.5</option>
+              <option value="claude-sonnet-4-6" selected>Sonnet 4.6</option>
+              <option value="claude-opus-4-6">Opus 4.6</option>
+            </select>
+          </div>
+          <div>
+            <label style="color:var(--text-secondary);display:block;margin-bottom:2px;">Parenting Chat</label>
+            <select id="claudeModel_parentchat" class="claude-model-select" onchange="saveClaudeSettings()">
+              <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
+              <option value="claude-sonnet-4-5-20241022">Sonnet 4.5</option>
+              <option value="claude-sonnet-4-6" selected>Sonnet 4.6</option>
+              <option value="claude-opus-4-6">Opus 4.6</option>
+            </select>
+          </div>
+        </div>
       </div>
       <p style="font-size:11px; color:var(--text-secondary); margin-top:4px;">The Claude API can't be called directly from a browser. You need a small proxy — <a href="#" onclick="showProxyInstructions();return false;" style="color:var(--blue);">see setup instructions</a>.</p>
       <div id="claudeProxyHelp" style="display:none;margin-top:8px;padding:10px;background:var(--bg);border-radius:var(--radius);font-size:12px;line-height:1.5;"></div>
@@ -1281,6 +1332,7 @@ Reply as JSON: {"thisWeek":"2-3 sentence summary of this week, warm and practica
 Only JSON, no markdown.`;
 
     const reply = await callClaude(prompt, {
+      model: getModelForFeature('calendar'),
       system: 'You are a warm, encouraging family assistant. Write like a supportive friend, not a robot. Be specific to their actual events. Keep each field under 50 words.',
       maxTokens: 400,
     });
@@ -1724,6 +1776,7 @@ Reply as a JSON array: [{"category":"short category","title":"short title","body
 Only valid JSON, no markdown fences.`;
 
     const reply = await callClaude(prompt, {
+      model: getModelForFeature('tips'),
       system: 'You are a warm, evidence-based child development advisor. Give practical, specific advice — not generic platitudes. Match the family\'s stated parenting philosophy. Always return valid JSON.',
       maxTokens: 1200,
     });
@@ -1838,6 +1891,7 @@ Guidelines:
 - If they describe a challenging behavior, give both an immediate response strategy AND a longer-term approach`;
 
     const reply = await callClaude('', {
+      model: getModelForFeature('parentchat'),
       system,
       messages: parentChatHistory.slice(-10),
       maxTokens: 800,
@@ -2260,23 +2314,41 @@ function saveNutritionKey() {
 // CLAUDE AI INTEGRATION
 // ===========================================================================
 
+const CLAUDE_FEATURES = ['mealplan','recipechat','substitutions','calendar','tips','parentchat'];
+const CLAUDE_MODEL_DEFAULTS = {
+  mealplan: 'claude-sonnet-4-6',
+  recipechat: 'claude-sonnet-4-6',
+  substitutions: 'claude-haiku-4-5-20251001',
+  calendar: 'claude-haiku-4-5-20251001',
+  tips: 'claude-sonnet-4-6',
+  parentchat: 'claude-sonnet-4-6',
+};
+
+function getModelForFeature(feature) {
+  return localStorage.getItem('claude_model_' + feature) || CLAUDE_MODEL_DEFAULTS[feature] || 'claude-haiku-4-5-20251001';
+}
+
 function saveClaudeSettings() {
   const key = document.getElementById('claudeApiKey').value.trim();
   const proxy = document.getElementById('claudeProxyUrl').value.trim();
-  const model = document.getElementById('claudeModel').value;
   if (key) localStorage.setItem('claude_api_key', key); else localStorage.removeItem('claude_api_key');
   if (proxy) localStorage.setItem('claude_proxy_url', proxy); else localStorage.removeItem('claude_proxy_url');
-  if (model) localStorage.setItem('claude_model', model);
+  CLAUDE_FEATURES.forEach(f => {
+    const el = document.getElementById('claudeModel_' + f);
+    if (el) localStorage.setItem('claude_model_' + f, el.value);
+  });
   toast('Claude settings saved');
 }
 
 function loadClaudeSettings() {
   const keyEl = document.getElementById('claudeApiKey');
   const proxyEl = document.getElementById('claudeProxyUrl');
-  const modelEl = document.getElementById('claudeModel');
   if (keyEl) keyEl.value = localStorage.getItem('claude_api_key') || '';
   if (proxyEl) proxyEl.value = localStorage.getItem('claude_proxy_url') || '';
-  if (modelEl) modelEl.value = localStorage.getItem('claude_model') || 'claude-haiku-4-5-20251001';
+  CLAUDE_FEATURES.forEach(f => {
+    const el = document.getElementById('claudeModel_' + f);
+    if (el) el.value = getModelForFeature(f);
+  });
 }
 
 function showProxyInstructions() {
@@ -2330,7 +2402,7 @@ async function callClaude(userPrompt, opts = {}) {
   if (!proxyUrl) throw new Error('No proxy URL. Set up a Cloudflare Worker — see Settings.');
 
   const systemPrompt = opts.system || '';
-  const model = opts.model || localStorage.getItem('claude_model') || 'claude-haiku-4-5-20251001';
+  const model = opts.model || 'claude-haiku-4-5-20251001';
   const maxTokens = opts.maxTokens || 1024;
 
   const body = {
@@ -2420,6 +2492,7 @@ Reply with ONLY a JSON array like: [{"dk":"2025-03-12","recipe":"Exact Recipe Na
 No other text.`;
 
     const reply = await callClaude(prompt, {
+      model: getModelForFeature('mealplan'),
       system: 'You are a family meal planning assistant. Reply with ONLY valid JSON, no markdown, no explanation.',
       maxTokens: 512,
     });
@@ -2505,6 +2578,7 @@ ${recipeContext}
 When suggesting recipes from their book, mention them by name. You can also suggest new recipe ideas they don't have yet. Keep responses short — 2-3 paragraphs max.`;
 
     const reply = await callClaude('', {
+      model: getModelForFeature('recipechat'),
       system,
       messages: chatHistory.slice(-10), // last 10 messages for context
       maxTokens: 800,
@@ -2543,6 +2617,7 @@ Reply ONLY as JSON array: [{"name":"substitute name","note":"brief note on how t
 No markdown, no explanation, just JSON.`;
 
     const reply = await callClaude(prompt, {
+      model: getModelForFeature('substitutions'),
       system: 'You are a helpful cooking assistant. Reply with ONLY valid JSON.',
       maxTokens: 500,
     });
@@ -2608,6 +2683,7 @@ Write a warm, concise 2-3 sentence summary of the week. Mention any highlights o
 
   try {
     return await callClaude(prompt, {
+      model: getModelForFeature('calendar'),
       system: 'You are a warm family assistant. Be concise, practical, and encouraging. No bullet points — flowing sentences only.',
       maxTokens: 250,
     });
