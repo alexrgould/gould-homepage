@@ -1317,6 +1317,23 @@ async function enhanceCalendarWithClaude(twEvents, nwEvents, today, thisSunday, 
     return c.name + (age !== null ? ' (' + Math.floor(age/12) + 'y' + (age%12) + 'm)' : '');
   }).join(', ');
 
+  // Build weather context from cached forecast
+  let weatherContext = '';
+  if (weatherCache && weatherCache.daily) {
+    const wd = weatherCache.daily;
+    const forecasts = [];
+    for (let i = 0; i < wd.time.length; i++) {
+      const d = new Date(wd.time[i] + 'T12:00:00');
+      const dayLabel = SHORT_DAYS[d.getDay()];
+      const label = WMO_LABELS[wd.weathercode[i]] || 'Unknown';
+      const hi = Math.round(wd.temperature_2m_max[i]);
+      const lo = Math.round(wd.temperature_2m_min[i]);
+      const rain = wd.precipitation_probability_max ? wd.precipitation_probability_max[i] : 0;
+      forecasts.push(`${dayLabel} ${wd.time[i]}: ${label}, ${hi}°F/${lo}°F${rain > 10 ? ', ' + rain + '% rain' : ''}`);
+    }
+    if (forecasts.length) weatherContext = '\nWeather forecast:\n' + forecasts.join('\n');
+  }
+
   try {
     const prompt = `Write two brief family calendar summaries and one parenting tip.
 
@@ -1325,10 +1342,11 @@ ${twFormatted || '(nothing scheduled)'}
 
 NEXT WEEK events (${dateKey(nextMonday)} to ${dateKey(nextSunday)}):
 ${nwFormatted || '(nothing scheduled)'}
+${weatherContext}
 
 ${kidAges ? 'Kids: ' + kidAges : ''}
 
-Reply as JSON: {"thisWeek":"2-3 sentence summary of this week, warm and practical","nextWeek":"2-3 sentence summary with a touch of inspiration","tip":"one actionable parenting tip related to the week's schedule"}
+Reply as JSON: {"thisWeek":"2-3 sentence summary of this week including relevant weather highlights, warm and practical","nextWeek":"2-3 sentence summary with weather outlook and a touch of inspiration","tip":"one actionable parenting tip related to the week's schedule or weather"}
 Only JSON, no markdown.`;
 
     const reply = await callClaude(prompt, {
@@ -1664,8 +1682,8 @@ function getChildAge(bdayStr) {
 function ageLabel(age) { if (!age) return ''; return age.months < 24 ? `${age.months} months` : `${age.years} yr${age.remainingMonths ? ' '+age.remainingMonths+' mo':''}`;  }
 function hashStr(s) { let h=0; for(let i=0;i<s.length;i++){h=((h<<5)-h)+s.charCodeAt(i);h|=0;} return Math.abs(h); }
 
-// Cached Claude-generated tips
-let _claudeTips = [];
+// Cached Claude-generated tips — persisted to localStorage
+let _claudeTips = JSON.parse(localStorage.getItem('claude_tips') || '[]');
 let _claudeTipsLoading = false;
 
 function renderTip() {
@@ -1785,13 +1803,14 @@ Only valid JSON, no markdown fences.`;
     const tips = JSON.parse(cleaned);
     if (Array.isArray(tips) && tips.length) {
       _claudeTips = tips;
+      localStorage.setItem('claude_tips', JSON.stringify(tips));
     } else {
       throw new Error('Invalid response format');
     }
   } catch(e) {
     console.log('[Claude] Tips error:', e.message);
     toast('Could not generate tips: ' + e.message);
-    _claudeTips = [];
+    // Keep existing cached tips on error — don't wipe them
   }
   _claudeTipsLoading = false;
   renderTip();
@@ -2328,9 +2347,18 @@ function getModelForFeature(feature) {
   return localStorage.getItem('claude_model_' + feature) || CLAUDE_MODEL_DEFAULTS[feature] || 'claude-haiku-4-5-20251001';
 }
 
+function normalizeProxyUrl(url) {
+  if (!url) return url;
+  url = url.trim().replace(/\/+$/, ''); // trim trailing slashes
+  if (url && !url.startsWith('http://') && !url.startsWith('https://')) url = 'https://' + url;
+  return url;
+}
+
 function saveClaudeSettings() {
   const key = document.getElementById('claudeApiKey').value.trim();
-  const proxy = document.getElementById('claudeProxyUrl').value.trim();
+  let proxy = normalizeProxyUrl(document.getElementById('claudeProxyUrl').value);
+  // Update the field so the user sees the corrected URL
+  document.getElementById('claudeProxyUrl').value = proxy;
   if (key) localStorage.setItem('claude_api_key', key); else localStorage.removeItem('claude_api_key');
   if (proxy) localStorage.setItem('claude_proxy_url', proxy); else localStorage.removeItem('claude_proxy_url');
   CLAUDE_FEATURES.forEach(f => {
@@ -2397,7 +2425,7 @@ function showProxyInstructions() {
 
 async function callClaude(userPrompt, opts = {}) {
   const apiKey = localStorage.getItem('claude_api_key');
-  const proxyUrl = localStorage.getItem('claude_proxy_url');
+  const proxyUrl = normalizeProxyUrl(localStorage.getItem('claude_proxy_url'));
   if (!apiKey) throw new Error('No Claude API key. Add it in Settings.');
   if (!proxyUrl) throw new Error('No proxy URL. Set up a Cloudflare Worker — see Settings.');
 
@@ -2673,13 +2701,28 @@ async function generateCalendarSummary(events, weekLabel) {
   const eventList = events.map(e => `${e.date}: ${e.title}${e.time ? ' at ' + e.time : ' (all day)'}`).join('\n');
   if (!eventList) return null;
 
+  // Include weather for the relevant period
+  let weatherSnippet = '';
+  if (weatherCache && weatherCache.daily) {
+    const wd = weatherCache.daily;
+    const lines = [];
+    for (let i = 0; i < wd.time.length; i++) {
+      const d = new Date(wd.time[i] + 'T12:00:00');
+      const label = WMO_LABELS[wd.weathercode[i]] || '';
+      const hi = Math.round(wd.temperature_2m_max[i]);
+      const rain = wd.precipitation_probability_max ? wd.precipitation_probability_max[i] : 0;
+      lines.push(`${SHORT_DAYS[d.getDay()]}: ${label}, ${hi}°F${rain > 10 ? ', ' + rain + '% rain' : ''}`);
+    }
+    if (lines.length) weatherSnippet = '\nWeather: ' + lines.join('; ');
+  }
+
   const prompt = `Here are the family's calendar events for ${weekLabel}:
 
 ${eventList}
 
-${kidAges ? 'Family kids: ' + kidAges : ''}
+${kidAges ? 'Family kids: ' + kidAges : ''}${weatherSnippet}
 
-Write a warm, concise 2-3 sentence summary of the week. Mention any highlights or things to prepare for. Add a small practical parenting or family tip related to the schedule. Keep it casual and encouraging.`;
+Write a warm, concise 2-3 sentence summary of the week. Mention any highlights or things to prepare for. Weave in relevant weather (e.g. suggest indoor/outdoor activities, remind about rain gear). Keep it casual and encouraging.`;
 
   try {
     return await callClaude(prompt, {
