@@ -1,4 +1,4 @@
-const CACHE_NAME = 'meal-planner-v12';
+const CACHE_NAME = 'meal-planner-v13';
 const ASSETS = [
   './index.html',
   './manifest.json'
@@ -23,11 +23,15 @@ self.addEventListener('activate', event => {
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
 
+  // Only handle GET — let POSTs (Claude proxy, etc.) go straight to the network
+  if (event.request.method !== 'GET') return;
+
   // Don't cache Firebase or external API calls
   if (url.hostname.includes('firebase') ||
       url.hostname.includes('googleapis') ||
       url.hostname.includes('google.com') ||
       url.hostname.includes('gstatic') ||
+      url.hostname.includes('workers.dev') ||
       url.hostname.includes('allorigins')) {
     return;
   }
@@ -39,6 +43,6 @@ self.addEventListener('fetch', event => {
         caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
         return response;
       })
-      .catch(() => caches.match(event.request))
+      .catch(() => caches.match(event.request).then(cached => cached || Response.error()))
   );
 });
