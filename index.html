@@ -7,6 +7,10 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Gould Home">
 <link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#faf6ef">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,600;0,700;1,400;1,600&display=swap" rel="stylesheet">
 <title>Gould Family Homepage</title>
 
 <!-- Firebase SDK (from CDN — no install needed) -->
@@ -18,47 +22,74 @@
 
 <style>
 :root {
-  --bg: #faf8f5; --surface: #ffffff; --surface-hover: #f5f2ee;
-  --border: #e8e4de; --text: #2c2417; --text-secondary: #7a7060;
+  --bg: #faf6ef; --surface: rgba(255,255,255,0.78); --surface-hover: rgba(255,255,255,0.95);
+  --border: rgba(214,201,182,0.55); --text: #2c2417; --text-secondary: #7a7060;
   --accent: #c45d2c; --accent-hover: #a84e25; --accent-light: #fdf0ea;
   --green: #3d8c40; --green-light: #eaf5ea;
   --blue: #3670a8; --blue-light: #e8f0f8;
   --red: #c44040; --red-light: #fdeaea;
   --purple: #7c5cbf; --purple-light: #f0ebfa;
-  --radius: 10px;
-  --shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+  --radius: 16px;
+  --shadow: 0 2px 14px rgba(76,60,38,0.07);
+  --serif: 'Fraunces', Georgia, 'Times New Roman', serif;
+  --glass-border: rgba(255,255,255,0.65);
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
-  background: var(--bg); color: var(--text);
+  background: var(--bg);
+  background-image: radial-gradient(120% 60% at 20% 0%, #fdf9f2 0%, #faf6ef 55%, #f4ecdf 100%);
+  background-attachment: fixed;
+  color: var(--text);
   min-height: 100dvh; display: flex; flex-direction: column;
   -webkit-font-smoothing: antialiased;
 }
 button { cursor: pointer; font-family: inherit; }
 input, select, textarea { font-family: inherit; font-size: inherit; }
 
-/* NAV */
-nav { display: flex; background: var(--surface); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 100; padding: 0 4px; }
-nav button { flex: 1; padding: 10px 2px 8px; border: none; background: none; font-size: 10px; font-weight: 600; color: var(--text-secondary); display: flex; flex-direction: column; align-items: center; gap: 3px; border-bottom: 2px solid transparent; transition: color 0.15s; }
-nav button.active { color: var(--accent); border-bottom-color: var(--accent); }
-nav button svg { width: 18px; height: 18px; }
+/* NAV — floating glass pill, thumb reach */
+nav {
+  display: flex; position: fixed; z-index: 100;
+  bottom: calc(10px + env(safe-area-inset-bottom));
+  left: 50%; transform: translateX(-50%);
+  width: min(96%, 560px);
+  background: rgba(255,255,255,0.72);
+  -webkit-backdrop-filter: blur(18px) saturate(1.6); backdrop-filter: blur(18px) saturate(1.6);
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  box-shadow: 0 6px 24px rgba(76,60,38,0.14);
+  padding: 6px 8px;
+}
+nav button { flex: 1; padding: 6px 2px; border: none; background: none; font-size: 9px; font-weight: 600; color: var(--text-secondary); display: flex; flex-direction: column; align-items: center; gap: 2px; border-radius: 999px; transition: color 0.15s, background 0.2s; }
+nav button.active { color: var(--accent); background: var(--accent-light); }
+nav button svg { width: 19px; height: 19px; }
 
 /* MAIN */
-main { flex: 1; padding: 16px; max-width: 600px; width: 100%; margin: 0 auto; }
-.view { display: none; } .view.active { display: block; }
-h1 { font-size: 26px; font-weight: 700; margin-bottom: 16px; }
-h2 { font-size: 18px; font-weight: 600; margin-bottom: 12px; }
-h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; }
+main { flex: 1; padding: 16px 16px calc(86px + env(safe-area-inset-bottom)); max-width: 600px; width: 100%; margin: 0 auto; }
+.view { display: none; } .view.active { display: block; animation: viewIn 0.25s ease-out; }
+@keyframes viewIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+h1 { font-family: var(--serif); font-size: 30px; font-weight: 600; letter-spacing: -0.3px; margin-bottom: 16px; }
+h2 { font-family: var(--serif); font-size: 20px; font-weight: 600; margin-bottom: 12px; }
+h3 { font-size: 13px; font-weight: 600; margin-bottom: 8px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.8px; }
 
 /* CARDS */
-.card { background: var(--surface); border-radius: var(--radius); border: 1px solid var(--border); padding: 14px 16px; margin-bottom: 10px; box-shadow: var(--shadow); transition: background 0.15s; }
+.card { background: var(--surface); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); border-radius: var(--radius); border: 1px solid var(--glass-border); padding: 15px 17px; margin-bottom: 10px; box-shadow: var(--shadow); transition: background 0.15s, transform 0.15s; }
 .card:hover { background: var(--surface-hover); }
+.card:active { transform: scale(0.99); }
 .card-title { font-weight: 600; font-size: 16px; }
 .card-sub { font-size: 13px; color: var(--text-secondary); margin-top: 2px; }
 
+/* HERO (Tonight) */
+.hero-card { background: linear-gradient(135deg, #c45d2c 0%, #a84e25 100%); border: none; border-radius: 20px; padding: 18px; margin-bottom: 12px; box-shadow: 0 8px 28px rgba(196,93,44,0.28); color: #fff7ef; }
+.hero-card .hero-label { font-size: 11px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; color: #f5d9c8; }
+.hero-card .hero-title { font-family: var(--serif); font-size: 24px; font-weight: 600; margin-top: 4px; color: #fff7ef; }
+.hero-card .hero-sub { font-size: 13px; color: #f0cdb8; margin-top: 3px; }
+.hero-card .btn-primary { background: rgba(255,247,239,0.96); color: #a84e25; }
+.hero-card .btn-secondary { background: rgba(255,255,255,0.18); color: #fff7ef; border-color: rgba(255,255,255,0.35); }
+
 /* BUTTONS */
-.btn { display: inline-flex; align-items: center; gap: 6px; padding: 10px 18px; border-radius: 8px; border: none; font-size: 14px; font-weight: 600; transition: all 0.15s; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 11px 20px; border-radius: 999px; border: none; font-size: 14px; font-weight: 600; transition: all 0.15s; }
+.btn:active { transform: scale(0.97); }
 .btn-primary { background: var(--accent); color: white; }
 .btn-primary:hover { background: var(--accent-hover); }
 .btn-secondary { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
@@ -98,7 +129,7 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
 /* GROCERY */
 .grocery-category { margin-bottom: 16px; }
 .grocery-category h3 { margin-bottom: 6px; font-size: 13px; padding: 0 4px; }
-.grocery-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 4px; cursor: pointer; -webkit-tap-highlight-color: transparent; user-select: none; }
+.grocery-item { display: flex; align-items: center; gap: 10px; padding: 12px 14px; background: var(--surface); border: 1px solid var(--glass-border); border-radius: 12px; margin-bottom: 5px; cursor: pointer; -webkit-tap-highlight-color: transparent; user-select: none; }
 .grocery-item.checked { opacity: 0.5; }
 .grocery-item.checked .item-name { text-decoration: line-through; }
 .grocery-item input[type=checkbox] { width: 22px; height: 22px; min-width: 22px; accent-color: var(--green); flex-shrink: 0; pointer-events: none; }
@@ -135,9 +166,9 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
 .import-status.error { display: block; background: var(--red-light); color: var(--red); }
 
 /* MODAL */
-.modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 200; align-items: flex-end; justify-content: center; }
+.modal-overlay { display: none; position: fixed; inset: 0; background: rgba(44,36,23,0.35); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); z-index: 200; align-items: flex-end; justify-content: center; }
 .modal-overlay.open { display: flex; }
-.modal { background: var(--bg); border-radius: 16px 16px 0 0; width: 100%; max-width: 600px; max-height: 85dvh; overflow-y: auto; padding: 20px; padding-bottom: 40px; animation: slideUp 0.25s ease-out; }
+.modal { background: var(--bg); border-radius: 24px 24px 0 0; width: 100%; max-width: 600px; max-height: 85dvh; overflow-y: auto; padding: 20px; padding-bottom: 40px; animation: slideUp 0.25s ease-out; }
 @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
 .modal h2 { margin-bottom: 16px; }
 
@@ -156,7 +187,7 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
 .sync-dot.offline { background: var(--red); }
 
 /* TOAST */
-.toast { position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%); background: var(--text); color: white; padding: 10px 20px; border-radius: 10px; font-size: 14px; font-weight: 500; z-index: 300; opacity: 0; transition: opacity 0.3s; pointer-events: none; max-width: 90%; text-align: center; }
+.toast { position: fixed; bottom: calc(96px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); background: var(--text); color: white; padding: 10px 20px; border-radius: 10px; font-size: 14px; font-weight: 500; z-index: 300; opacity: 0; transition: opacity 0.3s; pointer-events: none; max-width: 90%; text-align: center; }
 .toast.show { opacity: 1; }
 
 /* EMPTY STATE */
@@ -235,7 +266,7 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
 #cookMode .cook-progress { display: flex; gap: 4px; margin: 10px 0 4px; flex-shrink: 0; }
 #cookMode .cook-progress span { flex: 1; height: 4px; border-radius: 2px; background: var(--surface); }
 #cookMode .cook-progress span.done { background: var(--accent); }
-#cookMode .cook-step { flex: 1; overflow-y: auto; display: flex; flex-direction: column; justify-content: center; font-size: 26px; line-height: 1.45; padding: 12px 2px; touch-action: pan-y; }
+#cookMode .cook-step { flex: 1; overflow-y: auto; display: flex; flex-direction: column; justify-content: center; font-family: var(--serif); font-size: 27px; line-height: 1.45; padding: 12px 2px; touch-action: pan-y; }
 #cookMode .cook-step-ingr { margin-top: 18px; font-size: 15px; color: var(--text-secondary); line-height: 1.6; }
 #cookMode .cook-timer { display: inline-block; margin-top: 16px; padding: 8px 16px; border-radius: 20px; background: var(--surface); border: 1px solid var(--border); font-size: 17px; font-weight: 600; cursor: pointer; align-self: flex-start; }
 #cookMode .cook-timer.running { background: var(--accent); color: #fff; border-color: var(--accent); }
@@ -255,7 +286,7 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
 /* --- Fridge display mode --- */
 #fridgeMode { display: none; position: fixed; inset: 0; z-index: 2600; background: var(--bg); padding: 28px; overflow: hidden; }
 #fridgeMode.open { display: block; }
-#fridgeMode .fm-clock { font-size: 64px; font-weight: 700; letter-spacing: -1px; }
+#fridgeMode .fm-clock { font-family: var(--serif); font-size: 64px; font-weight: 600; letter-spacing: -1px; }
 #fridgeMode .fm-date { font-size: 20px; color: var(--text-secondary); margin-bottom: 18px; }
 #fridgeMode .fm-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 #fridgeMode .fm-card { background: var(--surface); border-radius: 14px; padding: 16px; }
@@ -1817,25 +1848,26 @@ function renderHome() {
   } else {
     const wNote = todayWeatherNote();
     card.innerHTML = tonight
-      ? `<div class="card" style="border-left:4px solid var(--accent);">
+      ? `<div class="hero-card">
           <div onclick="showRecipeDetail('${tonight.id}')">
-            <div style="font-size:12px;font-weight:600;color:var(--accent);text-transform:uppercase;margin-bottom:4px;">Tonight's Dinner</div>
-            <div class="card-title">${esc(tonight.name)}</div>
-            <div class="card-sub">${tonight.ingredients.length} ingredients${wNote ? ' · ' + wNote : ''}</div>
+            <div class="hero-label">Tonight's Dinner</div>
+            <div class="hero-title">${esc(tonight.name)}</div>
+            <div class="hero-sub">${tonight.ingredients.length} ingredients${wNote ? ' · ' + wNote : ''}</div>
           </div>
-          <div style="display:flex;gap:8px;margin-top:10px;">
+          <div style="display:flex;gap:8px;margin-top:14px;">
             <button class="btn btn-primary" style="flex:1;" onclick="event.stopPropagation();openCookMode('${tonight.id}')">👨‍🍳 Start cooking</button>
-            <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();pickTonight()" title="Swap for something else">🎲</button>
+            <button class="btn btn-secondary btn-sm" style="border:1px solid rgba(255,255,255,0.35);" onclick="event.stopPropagation();pickTonight()" title="Swap for something else">🎲</button>
           </div>
         </div>`
-      : `<div class="card" style="border-left:4px solid var(--border);">
+      : `<div class="hero-card" style="background:linear-gradient(135deg,#857463 0%,#6d5d4c 100%);box-shadow:0 8px 28px rgba(109,93,76,0.25);">
           <div onclick="showView('plan')">
-            <div style="font-size:12px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;margin-bottom:4px;">Tonight's Dinner</div>
-            <div class="card-title" style="color:var(--text-secondary);">Nothing planned${wNote ? ' · ' + wNote : ''}</div>
+            <div class="hero-label" style="color:#e3d7c8;">Tonight's Dinner</div>
+            <div class="hero-title">Nothing planned yet</div>
+            <div class="hero-sub" style="color:#d5c8b8;">${wNote ? wNote : 'Let’s fix that'}</div>
           </div>
-          <div style="display:flex;gap:8px;margin-top:10px;">
-            <button class="btn btn-primary" style="flex:1;" onclick="event.stopPropagation();pickTonight()">✨ Pick for me</button>
-            <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();showView('plan')">Plan week</button>
+          <div style="display:flex;gap:8px;margin-top:14px;">
+            <button class="btn btn-primary" style="flex:1;color:#6d5d4c;" onclick="event.stopPropagation();pickTonight()">✨ Pick for me</button>
+            <button class="btn btn-secondary btn-sm" style="border:1px solid rgba(255,255,255,0.35);" onclick="event.stopPropagation();showView('plan')">Plan week</button>
           </div>
         </div>`;
   }
