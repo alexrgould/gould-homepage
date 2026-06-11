@@ -171,10 +171,14 @@ Browser can't call the Anthropic API directly (CORS). A tiny Cloudflare Worker (
    - Go to Workers & Pages → Create → "Hello World" template
    - Replace the code with the contents of `claude-worker.js`
    - Deploy and copy the worker URL
-3. In the app's **Settings → Claude AI**:
-   - Paste your API key
-   - Paste the Cloudflare Worker URL
-   - Choose your preferred model (Haiku 4.5 is fast and cheap, Opus 4.6 is most capable)
+3. Store the API key on the Worker (recommended):
+   - Worker → Settings → Variables and Secrets → Add → Type: **Secret**
+   - Name: `ANTHROPIC_API_KEY`, Value: your `sk-ant-...` key
+   - The key never touches the browser, and the app's API key field can stay empty
+   - Optional: add `ALLOWED_ORIGIN` (plain text variable) set to your site origin, e.g. `https://yourusername.github.io`, so only your app can use the proxy
+4. In the app's **Settings → Claude AI**:
+   - Paste the Cloudflare Worker URL (API key only needed if you skipped step 3)
+   - Choose your preferred model per feature
    - Click "Test Connection" to verify
 
 ### 4. Google Calendar (optional)

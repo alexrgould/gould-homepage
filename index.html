@@ -445,9 +445,9 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
 
     <div class="card" style="margin-bottom:16px;">
       <h3 style="margin-bottom:8px;">Claude AI</h3>
-      <p style="font-size:13px; color:var(--text-secondary); margin-bottom:10px;">Powers smart meal planning, recipe chat, ingredient swaps, and calendar summaries. Get an API key from <a href="https://console.anthropic.com/" target="_blank" style="color:var(--blue);">console.anthropic.com</a>.</p>
+      <p style="font-size:13px; color:var(--text-secondary); margin-bottom:10px;">Powers smart meal planning, recipe chat, ingredient swaps, and calendar summaries. Get an API key from <a href="https://console.anthropic.com/" target="_blank" style="color:var(--blue);">console.anthropic.com</a>. Best practice: store the key as a secret on your Cloudflare Worker (see setup instructions below) and leave the key field empty.</p>
       <div style="display:flex; gap:6px; margin-bottom:8px;">
-        <input type="text" id="claudeApiKey" placeholder="Your Claude API key (sk-ant-...)" style="flex:1; padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-size:13px;" onchange="saveClaudeSettings()">
+        <input type="text" id="claudeApiKey" placeholder="API key (leave empty if stored on Worker)" style="flex:1; padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-size:13px;" onchange="saveClaudeSettings()">
         <button class="btn btn-secondary btn-sm" onclick="saveClaudeSettings()">Save</button>
       </div>
       <div style="display:flex; gap:6px; margin-bottom:8px;">
@@ -697,7 +697,7 @@ let saveTimer = null;
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 function getMonday(d) { d = new Date(d); const day = d.getDay(); d.setDate(d.getDate() - day + (day === 0 ? -6 : 1)); d.setHours(0,0,0,0); return d; }
 function fmtDate(d) { return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); }
-function dateKey(d) { return d.toISOString().split('T')[0]; }
+function dateKey(d) { const p = n => String(n).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); }
 function genCode() { const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let c = ''; for (let i = 0; i < 6; i++) c += chars[Math.floor(Math.random() * chars.length)]; return c; }
 
 // Persist to localStorage as offline backup
@@ -1138,7 +1138,7 @@ function renderCalendarSummary() {
     const groups = {};
     events.forEach(ev => {
       const d = evLocalDate(ev);
-      const key = d.toISOString().split('T')[0];
+      const key = dateKey(d);
       if (!groups[key]) groups[key] = [];
       groups[key].push(ev);
     });
@@ -1178,7 +1178,7 @@ function renderCalendarSummary() {
   // Generate week summary paragraph
   function weekSummary(events, isNextWeek) {
     const count = events.length;
-    const dayCount = new Set(events.map(ev => evLocalDate(ev).toISOString().split('T')[0])).size;
+    const dayCount = new Set(events.map(ev => dateKey(evLocalDate(ev)))).size;
     const titles = events.slice(0, 4).map(e => e.title);
     if (count === 0 && !isNextWeek) return `<p style="font-size:13px;color:var(--text-secondary);margin-bottom:10px;line-height:1.5;">Looks like a calm stretch ahead — no events on the calendar. A great chance to slow down, be present with the kids, and enjoy some unstructured family time.</p>`;
     if (count === 0 && isNextWeek) return `<p style="font-size:13px;color:var(--text-secondary);margin-bottom:10px;line-height:1.5;">Next week is wide open! Use the breathing room to plan something fun together — a family movie night, a new recipe, or just some extra time outdoors.</p>`;
@@ -1285,9 +1285,8 @@ function renderCalendarSummary() {
 
 let _calClaudeCache = {};
 async function enhanceCalendarWithClaude(twEvents, nwEvents, today, thisSunday, nextMonday, nextSunday) {
-  const apiKey = localStorage.getItem('claude_api_key');
   const proxyUrl = localStorage.getItem('claude_proxy_url');
-  if (!apiKey || !proxyUrl) return;
+  if (!proxyUrl) return;
 
   // Cache key based on date + event count to avoid re-fetching on every render
   const cacheKey = dateKey(today) + '_' + twEvents.length + '_' + nwEvents.length;
@@ -1696,9 +1695,8 @@ function renderTip() {
     return;
   }
 
-  const apiKey = localStorage.getItem('claude_api_key');
   const proxyUrl = localStorage.getItem('claude_proxy_url');
-  const hasClaude = apiKey && proxyUrl;
+  const hasClaude = !!proxyUrl;
 
   // If we have cached Claude tips, show them
   if (_claudeTips.length) {
@@ -1753,9 +1751,8 @@ function renderTip() {
 }
 
 async function refreshClaudeTips() {
-  const apiKey = localStorage.getItem('claude_api_key');
   const proxyUrl = localStorage.getItem('claude_proxy_url');
-  if (!apiKey || !proxyUrl) { toast('Set up Claude AI in Settings first'); showView('sync'); return; }
+  if (!proxyUrl) { toast('Set up Claude AI in Settings first'); showView('sync'); return; }
 
   const children = data.children || [];
   const kidInfo = children.filter(c => c.name && c.birthday).map(c => {
@@ -1838,9 +1835,8 @@ function loadParentingPhilosophy() {
 let parentChatHistory = [];
 
 function openParentChatModal() {
-  const apiKey = localStorage.getItem('claude_api_key');
   const proxyUrl = localStorage.getItem('claude_proxy_url');
-  if (!apiKey || !proxyUrl) { toast('Set up Claude AI in Settings first'); showView('sync'); return; }
+  if (!proxyUrl) { toast('Set up Claude AI in Settings first'); showView('sync'); return; }
   document.getElementById('parentChatModal').classList.add('open');
   if (!parentChatHistory.length) {
     const consequences = (data.consequences || []).filter(c => !c.resolved);
@@ -2058,7 +2054,7 @@ function showRecipeDetail(id) {
   if (r.url) html += `<p style="margin-bottom:12px;"><a href="${esc(r.url)}" target="_blank" style="color:var(--blue);font-size:14px;">View original recipe &rarr;</a></p>`;
   html += '<h3 style="margin-bottom:8px;">Ingredients</h3>';
   if (r.ingredients.length) {
-    const hasClaudeKey = !!localStorage.getItem('claude_api_key') && !!localStorage.getItem('claude_proxy_url');
+    const hasClaudeKey = !!localStorage.getItem('claude_proxy_url');
     html += '<ul style="padding-left:18px;margin-bottom:16px;">';
     r.ingredients.forEach((ing, idx) => {
       html += `<li style="margin-bottom:4px;font-size:15px;display:flex;align-items:center;gap:6px;">`;
@@ -2350,7 +2346,10 @@ function getModelForFeature(feature) {
 function normalizeProxyUrl(url) {
   if (!url) return url;
   url = url.trim().replace(/\/+$/, ''); // trim trailing slashes
-  if (url && !url.startsWith('http://') && !url.startsWith('https://')) url = 'https://' + url;
+  // Strip any existing protocol(s) — handles HTTPS://, https://, http://, double-prefixed, etc.
+  url = url.replace(/^(https?:\/\/)+/gi, '');
+  // Re-add clean https://
+  url = 'https://' + url;
   return url;
 }
 
@@ -2383,25 +2382,44 @@ function showProxyInstructions() {
   const el = document.getElementById('claudeProxyHelp');
   if (el.style.display !== 'none') { el.style.display = 'none'; return; }
   el.style.display = 'block';
-  el.innerHTML = `<strong>Free Cloudflare Worker Setup (2 min):</strong><br>
+  el.innerHTML = `<strong>Free Cloudflare Worker Setup (3 min):</strong><br>
 1. Go to <a href="https://dash.cloudflare.com/" target="_blank" style="color:var(--blue);">dash.cloudflare.com</a> and create a free account<br>
 2. Go to Workers & Pages → Create → "Hello World" template<br>
 3. Replace the code with the proxy code below, then click Deploy<br>
-4. Copy the worker URL (e.g. <code>https://my-proxy.username.workers.dev</code>) into the Proxy URL field above<br><br>
+4. <strong>Recommended:</strong> Worker → Settings → Variables and Secrets → Add → Type: <em>Secret</em>, Name: <code>ANTHROPIC_API_KEY</code>, Value: your <code>sk-ant-...</code> key. Your key then stays on the Worker and you can leave the API key field above empty.<br>
+5. Optional: add another variable <code>ALLOWED_ORIGIN</code> = your site origin (e.g. <code>https://username.github.io</code>) so only your app can use the proxy<br>
+6. Copy the worker URL (e.g. <code>https://my-proxy.username.workers.dev</code>) into the Proxy URL field above<br><br>
 <strong>Worker code:</strong><br>
 <pre style="background:var(--surface);padding:8px;border-radius:4px;font-size:11px;overflow-x:auto;white-space:pre-wrap;border:1px solid var(--border);">export default {
-  async fetch(request) {
+  async fetch(request, env) {
+    const allowedOrigin = env.ALLOWED_ORIGIN || '*';
+    const corsHeaders = {
+      'Access-Control-Allow-Origin': allowedOrigin,
+      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, x-api-key, anthropic-version',
+      'Vary': 'Origin',
+    };
     if (request.method === 'OPTIONS') {
-      return new Response(null, {
-        headers: {
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': 'POST',
-          'Access-Control-Allow-Headers': 'Content-Type, x-api-key, anthropic-version',
-        }
+      return new Response(null, { headers: corsHeaders });
+    }
+    if (request.method !== 'POST') {
+      return new Response('Method not allowed', { status: 405 });
+    }
+    const origin = request.headers.get('Origin') || '';
+    if (env.ALLOWED_ORIGIN &amp;&amp; origin &amp;&amp; origin !== env.ALLOWED_ORIGIN) {
+      return new Response(JSON.stringify({ error: 'Origin not allowed' }), {
+        status: 403,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
       });
     }
     const body = await request.text();
-    const apiKey = request.headers.get('x-api-key');
+    const apiKey = env.ANTHROPIC_API_KEY || request.headers.get('x-api-key');
+    if (!apiKey) {
+      return new Response(JSON.stringify({ error: 'No API key configured' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    }
     const resp = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -2416,7 +2434,7 @@ function showProxyInstructions() {
       status: resp.status,
       headers: {
         'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
+        ...corsHeaders,
       }
     });
   }
@@ -2426,7 +2444,6 @@ function showProxyInstructions() {
 async function callClaude(userPrompt, opts = {}) {
   const apiKey = localStorage.getItem('claude_api_key');
   const proxyUrl = normalizeProxyUrl(localStorage.getItem('claude_proxy_url'));
-  if (!apiKey) throw new Error('No Claude API key. Add it in Settings.');
   if (!proxyUrl) throw new Error('No proxy URL. Set up a Cloudflare Worker — see Settings.');
 
   const systemPrompt = opts.system || '';
@@ -2440,19 +2457,23 @@ async function callClaude(userPrompt, opts = {}) {
   };
   if (systemPrompt) body.system = systemPrompt;
 
+  const headers = {
+    'Content-Type': 'application/json',
+    'anthropic-version': '2023-06-01',
+  };
+  // Only send the key if one is set locally — if your Worker has the
+  // ANTHROPIC_API_KEY secret configured, no key needs to live in the browser.
+  if (apiKey) headers['x-api-key'] = apiKey;
+
   const resp = await fetchWithTimeout(proxyUrl, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
+    headers,
     body: JSON.stringify(body),
   }, 30000);
 
   if (!resp.ok) {
     const errText = await resp.text().catch(() => '');
-    if (resp.status === 401) throw new Error('Invalid Claude API key. Check Settings.');
+    if (resp.status === 401) throw new Error('Invalid or missing API key. Add ANTHROPIC_API_KEY as a secret on your Worker, or enter a key in Settings.');
     if (resp.status === 429) throw new Error('Rate limited. Wait a moment and try again.');
     throw new Error('Claude API error: ' + resp.status + ' ' + errText.substring(0, 100));
   }
@@ -2474,9 +2495,8 @@ async function testClaudeConnection() {
 
 // --- SMART MEAL PLANNING ---
 async function smartMealPlan() {
-  const apiKey = localStorage.getItem('claude_api_key');
   const proxyUrl = localStorage.getItem('claude_proxy_url');
-  if (!apiKey || !proxyUrl) { toast('Set up Claude AI in Settings first'); showView('sync'); return; }
+  if (!proxyUrl) { toast('Set up Claude AI in Settings first'); showView('sync'); return; }
 
   // Gather context
   const emptyDays = [];
@@ -2559,9 +2579,8 @@ No other text.`;
 let chatHistory = [];
 
 function openChatModal() {
-  const apiKey = localStorage.getItem('claude_api_key');
   const proxyUrl = localStorage.getItem('claude_proxy_url');
-  if (!apiKey || !proxyUrl) { toast('Set up Claude AI in Settings first'); showView('sync'); return; }
+  if (!proxyUrl) { toast('Set up Claude AI in Settings first'); showView('sync'); return; }
   document.getElementById('chatModal').classList.add('open');
   if (!chatHistory.length) {
     document.getElementById('chatMessages').innerHTML = '<div style="text-align:center;color:var(--text-secondary);font-size:13px;padding:20px;">Ask me anything about cooking! Try:<br><br>"What can I make with chicken and broccoli?"<br>"Suggest a quick weeknight dinner"<br>"What goes well with salmon?"</div>';
@@ -2626,9 +2645,8 @@ let _currentSubRecipe = '';
 let _currentSubIngredient = '';
 
 async function suggestSubstitution(ingredientName, recipeName) {
-  const apiKey = localStorage.getItem('claude_api_key');
   const proxyUrl = localStorage.getItem('claude_proxy_url');
-  if (!apiKey || !proxyUrl) { toast('Set up Claude AI in Settings first'); return; }
+  if (!proxyUrl) { toast('Set up Claude AI in Settings first'); return; }
 
   _currentSubRecipe = recipeName;
   _currentSubIngredient = ingredientName;
@@ -2689,9 +2707,8 @@ function applySubstitution(newIngredientName) {
 
 // --- CLAUDE CALENDAR SUMMARIES ---
 async function generateCalendarSummary(events, weekLabel) {
-  const apiKey = localStorage.getItem('claude_api_key');
   const proxyUrl = localStorage.getItem('claude_proxy_url');
-  if (!apiKey || !proxyUrl) return null;
+  if (!proxyUrl) return null;
 
   const kidAges = (data.children || []).map(c => {
     const age = getChildAge(c.birthday);
