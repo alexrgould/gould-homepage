@@ -243,6 +243,15 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
 #cookMode .cook-nav button { flex: 1; padding: 16px; font-size: 16px; font-weight: 600; border-radius: 12px; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
 #cookMode .cook-nav button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
 
+/* --- Skeleton loaders & typing dots --- */
+.skel { border-radius: 6px; background: linear-gradient(90deg, var(--surface) 25%, var(--border) 50%, var(--surface) 75%); background-size: 200% 100%; animation: skel-shimmer 1.2s linear infinite; height: 13px; margin: 7px 0; }
+@keyframes skel-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+.typing-dots { display: inline-flex; gap: 4px; align-items: center; padding: 2px 0; }
+.typing-dots span { width: 7px; height: 7px; border-radius: 50%; background: var(--text-secondary); animation: dot-bounce 1.2s infinite; }
+.typing-dots span:nth-child(2) { animation-delay: .15s; }
+.typing-dots span:nth-child(3) { animation-delay: .3s; }
+@keyframes dot-bounce { 0%, 60%, 100% { transform: translateY(0); opacity: .4; } 30% { transform: translateY(-4px); opacity: 1; } }
+
 /* --- Fridge display mode --- */
 #fridgeMode { display: none; position: fixed; inset: 0; z-index: 2600; background: var(--bg); padding: 28px; overflow: hidden; }
 #fridgeMode.open { display: block; }
@@ -1900,10 +1909,11 @@ function renderTip() {
 
   // Loading state
   if (_claudeTipsLoading) {
-    el.innerHTML = `<div class="tip-card" style="border-left:4px solid var(--purple);text-align:center;padding:24px;">
-      <div style="font-size:24px;margin-bottom:8px;">🤖</div>
-      <div style="font-weight:600;margin-bottom:4px;">Generating personalized tips...</div>
-      <div style="font-size:13px;color:var(--text-secondary);">Thinking about your family</div>
+    el.innerHTML = `<div class="tip-card" style="border-left:4px solid var(--purple);padding:18px;">
+      <div style="font-size:13px;font-weight:600;color:var(--purple);margin-bottom:8px;">🤖 Writing tips for your family...</div>
+      <div class="skel" style="width:90%;"></div>
+      <div class="skel" style="width:75%;"></div>
+      <div class="skel" style="width:60%;"></div>
     </div>`;
     return;
   }
@@ -2050,7 +2060,7 @@ async function sendParentChatMessage() {
   renderParentChatMessages();
 
   const el = document.getElementById('parentChatMessages');
-  el.innerHTML += '<div id="parentChatThinking" style="margin-bottom:12px;"><div style="padding:10px 14px;border-radius:16px 16px 16px 4px;background:var(--surface);font-size:13px;color:var(--text-secondary);">Thinking...</div></div>';
+  el.innerHTML += '<div id="parentChatThinking" style="margin-bottom:12px;"><div style="display:inline-block;padding:12px 16px;border-radius:16px 16px 16px 4px;background:var(--surface);"><span class="typing-dots"><span></span><span></span><span></span></span></div></div>';
   el.scrollTop = el.scrollHeight;
   document.getElementById('parentChatSendBtn').disabled = true;
 
@@ -2709,6 +2719,18 @@ async function smartMealPlan() {
   const kidAges = (data.children || []).map(c => { const age = getChildAge(c.birthday); return c.name + (age !== null ? ' ('+age+' months)' : ''); }).join(', ');
   const month = new Date().toLocaleDateString('en-US', { month: 'long' });
 
+  // Schedule + weather context so the reasons can be specific ("quick dinner — soccer at 6")
+  const emptyDks = new Set(emptyDays.map(d => d.dk));
+  const weekEvents = (gcalEvents || [])
+    .filter(ev => emptyDks.has((ev.start || '').substring(0, 10)))
+    .map(ev => `${(ev.start || '').substring(0, 10)}: ${ev.title}${ev.allDay ? ' (all day)' : ' at ' + new Date(ev.start).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`)
+    .join('\n');
+  let weekWeather = '';
+  if (weatherCache && weatherCache.daily) {
+    const wd = weatherCache.daily;
+    weekWeather = wd.time.map((t, i) => emptyDks.has(t) ? `${t}: ${WMO_LABELS[wd.weathercode[i]] || ''}, high ${Math.round(wd.temperature_2m_max[i])}°F${wd.precipitation_probability_max && wd.precipitation_probability_max[i] > 40 ? ', ' + wd.precipitation_probability_max[i] + '% rain' : ''}` : '').filter(Boolean).join('\n');
+  }
+
   const btn = document.querySelector('[onclick="smartMealPlan()"]');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Thinking...'; }
 
@@ -2721,6 +2743,8 @@ ${recipeList}
 ${recentMeals.length ? 'Recently cooked (avoid repeating): ' + recentMeals.join(', ') : ''}
 ${kidAges ? 'Kids in family: ' + kidAges : ''}
 Month: ${month}
+${weekEvents ? '\nFamily schedule on those days:\n' + weekEvents : ''}
+${weekWeather ? '\nWeather forecast:\n' + weekWeather : ''}
 
 Rules:
 - ONLY pick from the available recipes list above — use exact names
@@ -2728,14 +2752,17 @@ Rules:
 - Prefer higher-rated recipes
 - Consider the season (${month}) for comfort vs lighter meals
 - If there are young kids, favor kid-friendly options
+- On busy evenings (events near dinner time), pick quicker meals and say so in the reason
+- "reason" must be short (max 12 words), specific, and reference the schedule or weather when relevant
+- "alt" is a different recipe from the list as a backup choice
 
-Reply with ONLY a JSON array like: [{"dk":"2025-03-12","recipe":"Exact Recipe Name"}]
+Reply with ONLY a JSON array like: [{"dk":"2025-03-12","recipe":"Exact Recipe Name","reason":"Quick stir-fry — soccer ends at 6","alt":"Different Exact Recipe Name"}]
 No other text.`;
 
     const reply = await callClaude(prompt, {
       feature: 'mealplan',
       system: 'You are a family meal planning assistant. Reply with ONLY valid JSON, no markdown, no explanation.',
-      maxTokens: 512,
+      maxTokens: 1000,
     });
 
     // Parse the JSON response
@@ -2749,7 +2776,8 @@ No other text.`;
     for (const pick of picks) {
       const recipe = data.recipes.find(r => r.name.toLowerCase() === pick.recipe.toLowerCase());
       if (recipe && emptyDays.find(d => d.dk === pick.dk)) {
-        data.mealPlan[pick.dk] = [{ meal: 'dinner', recipeId: recipe.id }];
+        const altRecipe = pick.alt ? data.recipes.find(r => r.name.toLowerCase() === pick.alt.toLowerCase() && r.id !== recipe.id) : null;
+        data.mealPlan[pick.dk] = [{ meal: 'dinner', recipeId: recipe.id, reason: (pick.reason || '').substring(0, 90), altId: altRecipe ? altRecipe.id : '' }];
         if (!data.usageHistory) data.usageHistory = [];
         data.usageHistory.push({ recipeId: recipe.id, date: pick.dk, added: Date.now() });
         filled++;
@@ -2805,7 +2833,7 @@ async function sendChatMessage() {
 
   // Add thinking indicator
   const el = document.getElementById('chatMessages');
-  el.innerHTML += '<div id="chatThinking" style="margin-bottom:12px;"><div style="padding:10px 14px;border-radius:16px 16px 16px 4px;background:var(--surface);font-size:13px;color:var(--text-secondary);">Thinking...</div></div>';
+  el.innerHTML += '<div id="chatThinking" style="margin-bottom:12px;"><div style="display:inline-block;padding:12px 16px;border-radius:16px 16px 16px 4px;background:var(--surface);"><span class="typing-dots"><span></span><span></span><span></span></span></div></div>';
   el.scrollTop = el.scrollHeight;
   document.getElementById('chatSendBtn').disabled = true;
 
@@ -2852,7 +2880,7 @@ async function suggestSubstitution(ingredientName, recipeName) {
   _currentSubIngredient = ingredientName;
 
   document.getElementById('subModal').classList.add('open');
-  document.getElementById('subContent').innerHTML = `<p style="color:var(--text-secondary);">Finding swaps for <strong>${esc(ingredientName)}</strong>...</p>`;
+  document.getElementById('subContent').innerHTML = `<p style="color:var(--text-secondary);margin-bottom:10px;">Finding swaps for <strong>${esc(ingredientName)}</strong>...</p><div class="skel" style="width:85%;"></div><div class="skel" style="width:70%;"></div><div class="skel" style="width:80%;"></div>`;
 
   try {
     const kidAges = (data.children || []).map(c => c.name).join(', ');
@@ -3451,6 +3479,21 @@ function getDayMode(dk) {
   return 'cooking';
 }
 
+// Swap a Claude pick for its suggested alternate
+function swapMealAlt(dk) {
+  const meals = data.mealPlan[dk];
+  if (!meals || !meals.length || !meals[0].altId) return;
+  const m = meals[0];
+  const oldId = m.recipeId;
+  m.recipeId = m.altId;
+  m.altId = oldId;
+  const r = data.recipes.find(x => x.id === m.recipeId);
+  m.reason = 'Your swap' + (r && r.cuisine ? ' — ' + r.cuisine : '');
+  persist();
+  renderMealPlan();
+  if (r) toast('Swapped to ' + r.name);
+}
+
 function renderMealPlan() {
   const end=new Date(currentWeekStart); end.setDate(end.getDate()+6);
   document.getElementById('weekLabel').textContent=fmtDate(currentWeekStart)+' – '+fmtDate(end);
@@ -3492,6 +3535,11 @@ function renderMealPlan() {
       else if (selectedCuisine) filteredRecipes = data.recipes.filter(r=>r.cuisine===selectedCuisine);
       else filteredRecipes = data.recipes;
       html+=`<select onchange="setMeal('${dk}',this.value)"><option value="">— pick a recipe —</option>${filteredRecipes.map(r=>`<option value="${r.id}" ${currentId===r.id?'selected':''}>${esc(r.name)}</option>`).join('')}</select>`;
+      // Claude's reasoning for this pick + one-tap swap to the alternate
+      if (meals.length && meals[0].reason) {
+        const alt = meals[0].altId ? data.recipes.find(r=>r.id===meals[0].altId) : null;
+        html+=`<div style="font-size:12px;color:var(--purple);margin-top:6px;line-height:1.4;">✨ ${esc(meals[0].reason)}${alt ? ` &nbsp;<button onclick="swapMealAlt('${dk}')" style="background:none;border:1px solid var(--border);border-radius:10px;padding:2px 8px;font-size:11px;color:var(--text-secondary);cursor:pointer;">↺ ${esc(alt.name)}</button>` : ''}</div>`;
+      }
     } else if (mode === 'doordash') {
       // DoorDash mode — restaurant dropdown + cost/items
       const ddRests = ensureDD().restaurants;
