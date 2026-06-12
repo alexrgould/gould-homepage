@@ -115,7 +115,7 @@ h3 { font-size: 13px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
 .ingr-row button { background: none; border: none; color: var(--red); font-size: 20px; padding: 2px; flex-shrink: 0; }
 
 /* MEAL PLAN */
-.day-card { background: var(--surface); border-radius: var(--radius); border: 1px solid var(--border); margin-bottom: 8px; box-shadow: var(--shadow); display: flex; align-items: stretch; }
+.day-card { background: var(--surface); border-radius: var(--radius); border: 1px solid var(--border); margin-bottom: 8px; box-shadow: var(--shadow); display: flex; align-items: stretch; overflow: hidden; }
 .day-header { padding: 12px 14px; font-weight: 700; font-size: 14px; background: var(--surface-hover); border-right: 1px solid var(--border); min-width: 70px; text-align: center; display: flex; flex-direction: column; justify-content: center; }
 .day-header .date { font-weight: 400; font-size: 11px; color: var(--text-secondary); display: block; margin-top: 1px; }
 .day-meal { flex: 1; padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; }
@@ -130,9 +130,7 @@ h3 { font-size: 13px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
 .grocery-category { margin-bottom: 16px; }
 .grocery-category h3 { margin-bottom: 6px; font-size: 13px; padding: 0 4px; }
 .grocery-item { display: flex; align-items: center; gap: 10px; padding: 12px 14px; background: var(--surface); border: 1px solid var(--glass-border); border-radius: 12px; margin-bottom: 5px; cursor: pointer; -webkit-tap-highlight-color: transparent; user-select: none; }
-.grocery-item.checked { opacity: 0.5; }
-.grocery-item.checked .item-name { text-decoration: line-through; }
-.grocery-item input[type=checkbox] { width: 22px; height: 22px; min-width: 22px; accent-color: var(--green); flex-shrink: 0; pointer-events: none; }
+.grocery-item.checked { opacity: 0.55; }
 .item-name { font-size: 15px; flex: 1; }
 .item-qty { font-size: 13px; color: var(--text-secondary); flex-shrink: 0; }
 
@@ -187,8 +185,8 @@ h3 { font-size: 13px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
 .sync-dot.offline { background: var(--red); }
 
 /* TOAST */
-.toast { position: fixed; bottom: calc(96px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); background: var(--text); color: white; padding: 10px 20px; border-radius: 10px; font-size: 14px; font-weight: 500; z-index: 300; opacity: 0; transition: opacity 0.3s; pointer-events: none; max-width: 90%; text-align: center; }
-.toast.show { opacity: 1; }
+.toast { position: fixed; bottom: calc(96px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%) translateY(10px); background: var(--text); color: white; padding: 10px 20px; border-radius: 999px; font-size: 14px; font-weight: 500; z-index: 300; opacity: 0; transition: opacity 0.3s, transform 0.35s cubic-bezier(.22,1,.36,1); pointer-events: none; max-width: 90%; text-align: center; }
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
 /* EMPTY STATE */
 .empty-state { text-align: center; padding: 40px 20px; color: var(--text-secondary); }
@@ -273,6 +271,38 @@ h3 { font-size: 13px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
 #cookMode .cook-nav { display: flex; gap: 10px; flex-shrink: 0; }
 #cookMode .cook-nav button { flex: 1; padding: 16px; font-size: 16px; font-weight: 600; border-radius: 12px; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
 #cookMode .cook-nav button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+/* --- Motion & delight --- */
+::view-transition-old(root) { animation-duration: 0.16s; }
+::view-transition-new(root) { animation-duration: 0.22s; }
+html.vt .view.active { animation: none; }
+
+@keyframes cardIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+#view-home.active > * { animation: cardIn .45s cubic-bezier(.22,1,.36,1) backwards; }
+#view-home.active > *:nth-child(2) { animation-delay: .04s; }
+#view-home.active > *:nth-child(3) { animation-delay: .08s; }
+#view-home.active > *:nth-child(4) { animation-delay: .12s; }
+#view-home.active > *:nth-child(5) { animation-delay: .16s; }
+#view-home.active > *:nth-child(6) { animation-delay: .20s; }
+#view-home.active > *:nth-child(n+7) { animation-delay: .24s; }
+
+nav button.active svg { animation: tabSpring .4s cubic-bezier(.34,1.56,.64,1); }
+@keyframes tabSpring { 0% { transform: scale(.8); } 55% { transform: scale(1.15); } 100% { transform: scale(1); } }
+
+.gcheck { width: 24px; height: 24px; min-width: 24px; border-radius: 8px; border: 2px solid var(--border); background: rgba(255,255,255,0.9); display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: background .2s, border-color .2s, transform .15s; }
+.grocery-item:active .gcheck { transform: scale(.88); }
+.grocery-item.checked .gcheck { background: var(--green); border-color: var(--green); }
+.gcheck svg { width: 14px; height: 14px; fill: none; stroke: #fff; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 24; stroke-dashoffset: 24; }
+.grocery-item.checked .gcheck svg { animation: checkDraw .3s ease-out .05s forwards; }
+@keyframes checkDraw { to { stroke-dashoffset: 0; } }
+
+@supports (animation-timeline: view()) {
+  #recipeList .card, #recipeDiscover .card { animation: cardIn linear both; animation-timeline: view(); animation-range: entry 0% entry 30%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+}
 
 /* --- Skeleton loaders & typing dots --- */
 .skel { border-radius: 6px; background: linear-gradient(90deg, var(--surface) 25%, var(--border) 50%, var(--surface) 75%); background-size: 200% 100%; animation: skel-shimmer 1.2s linear infinite; height: 13px; margin: 7px 0; }
@@ -456,6 +486,7 @@ h3 { font-size: 13px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
         <span id="syncBadge" style="font-size:12px; font-weight:600; padding:3px 10px; border-radius:20px;"></span>
       </div>
       <p id="syncInfo" style="font-size:13px; color:var(--text-secondary);"></p>
+      <p id="appVersion" style="font-size:11px; color:var(--text-secondary); margin-top:6px;"></p>
     </div>
 
     <div class="card" style="margin-bottom:16px;">
@@ -992,10 +1023,20 @@ function leaveFamily() {
 // VIEW SWITCHING
 // ===========================================================================
 function showView(name) {
-  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-  document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
-  document.getElementById('view-' + name).classList.add('active');
-  document.getElementById('nav-' + name).classList.add('active');
+  const apply = () => {
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+    document.getElementById('view-' + name).classList.add('active');
+    document.getElementById('nav-' + name).classList.add('active');
+  };
+  // Native cross-fade between tabs (Safari 18+ / Chrome); falls back to instant swap
+  const wasActive = document.querySelector('.view.active');
+  if (document.startViewTransition && wasActive && wasActive.id !== 'view-' + name && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    document.documentElement.classList.add('vt');
+    document.startViewTransition(apply).finished.finally(() => document.documentElement.classList.remove('vt'));
+  } else {
+    apply();
+  }
   if (name === 'home') renderHome();
   if (name === 'recipes') { renderRecipes(); if (!blogFeedCache.items || Date.now() - (blogFeedCache.fetchedAt||0) > 300000) fetchBlogFeeds(); else renderBlogFeed(blogFeedCache.items); }
   if (name === 'plan') renderMealPlan();
@@ -1237,7 +1278,7 @@ function renderCalendarSummary() {
   if (!el) return;
 
   if (!gcalToken) {
-    el.innerHTML = `<div class="card" onclick="showView('sync')" style="border-left:4px solid var(--blue);cursor:pointer;"><div style="font-size:12px;font-weight:600;color:var(--blue);text-transform:uppercase;margin-bottom:4px;">📅 Calendar</div><div class="card-title" style="color:var(--text-secondary);font-size:14px;">Connect Google Calendar in Settings</div></div>`;
+    el.innerHTML = `<div class="card" onclick="showView('sync')" style="cursor:pointer;"><div style="font-size:12px;font-weight:600;color:var(--blue);text-transform:uppercase;margin-bottom:4px;">📅 Calendar</div><div class="card-title" style="color:var(--text-secondary);font-size:14px;">Connect Google Calendar in Settings</div></div>`;
     return;
   }
 
@@ -1376,7 +1417,7 @@ function renderCalendarSummary() {
   let html = '';
 
   // THIS WEEK CARD
-  html += `<div class="card" style="border-left:4px solid var(--blue);">`;
+  html += `<div class="card">`;
   html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">`;
   html += `<div style="font-size:12px;font-weight:600;color:var(--blue);text-transform:uppercase;">📅 This Week</div>`;
   html += `<button class="btn btn-sm btn-secondary" onclick="event.stopPropagation();fetchCalendarEvents();" style="font-size:11px;padding:2px 8px;">Refresh</button>`;
@@ -1397,7 +1438,7 @@ function renderCalendarSummary() {
   html += `</div>`;
 
   // NEXT WEEK CARD
-  html += `<div class="card" style="border-left:4px solid var(--purple);margin-top:12px;">`;
+  html += `<div class="card" style="margin-top:12px;">`;
   html += `<div style="font-size:12px;font-weight:600;color:var(--purple);text-transform:uppercase;margin-bottom:8px;">🗓️ Next Week</div>`;
   html += weekSummary(nextWeekEvents, true);
   if (nextWeekEvents.length) {
@@ -1415,7 +1456,7 @@ function renderCalendarSummary() {
   html += `</div>`;
 
   // PARENTING TIP
-  html += `<div class="card" style="border-left:4px solid var(--green);margin-top:12px;">`;
+  html += `<div class="card" style="margin-top:12px;">`;
   html += `<div style="font-size:12px;font-weight:600;color:var(--green);text-transform:uppercase;margin-bottom:8px;">💡 Parenting Tip of the Week</div>`;
   html += `<p style="font-size:13px;color:var(--text);line-height:1.5;">${esc(parentingTips[tipIdx])}</p>`;
   html += `</div>`;
@@ -1568,7 +1609,7 @@ function renderConsequences() {
 
   // Active consequences
   if (active.length) {
-    html += `<div class="card" style="border-left:4px solid var(--red);">`;
+    html += `<div class="card">`;
     html += `<div style="font-size:12px;font-weight:600;color:var(--red);text-transform:uppercase;margin-bottom:8px;">Active Consequences</div>`;
     active.forEach(c => {
       const start = new Date(c.startDate+'T00:00:00');
@@ -1665,7 +1706,7 @@ function renderDoorDashTracker() {
   const overBudget = budget > 0 && totalSpent > budget;
   const overCount = target > 0 && orderCount > target;
 
-  let html = `<div class="card" style="border-left:4px solid #ff3008;">`;
+  let html = `<div class="card">`;
   html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><div style="font-size:12px;font-weight:600;color:#ff3008;text-transform:uppercase;">🛵 DoorDash — ${esc(monthName)}</div></div>`;
 
   // Spending bar
@@ -1726,7 +1767,7 @@ async function fetchWeather() {
   }
   const el = document.getElementById('homeWeather');
   if (!el) return;
-  el.innerHTML = '<div class="card" style="border-left:4px solid #4a90d9;"><p style="font-size:13px;color:var(--text-secondary);">Loading weather...</p></div>';
+  el.innerHTML = '<div class="card"><p style="font-size:13px;color:var(--text-secondary);">Loading weather...</p></div>';
 
   try {
     // Get user's location
@@ -1744,7 +1785,7 @@ async function fetchWeather() {
     renderWeather(weatherCache);
   } catch(e) {
     const el2 = document.getElementById('homeWeather');
-    if (el2) el2.innerHTML = '<div class="card" style="border-left:4px solid #4a90d9;"><p style="font-size:13px;color:var(--text-secondary);">Weather unavailable — enable location access to see your forecast.</p></div>';
+    if (el2) el2.innerHTML = '<div class="card"><p style="font-size:13px;color:var(--text-secondary);">Weather unavailable — enable location access to see your forecast.</p></div>';
   }
 }
 
@@ -1753,7 +1794,7 @@ function renderWeather(w) {
   if (!el || !w || !w.daily) return;
   const d = w.daily;
   const today = new Date();
-  let html = '<div class="card" style="border-left:4px solid #4a90d9;">';
+  let html = '<div class="card">';
   html += '<h3 style="margin-bottom:10px;">🌤️ This Week\'s Weather</h3>';
   html += '<div style="display:flex;gap:4px;overflow-x:auto;padding-bottom:4px;">';
   for (let i = 0; i < d.time.length && i < 7; i++) {
@@ -1838,13 +1879,13 @@ function renderHome() {
   const card = document.getElementById('homeTonightCard');
   const todayIsEO = todayDD && todayDD.mode === 'eatingout';
   if (todayIsEO && todayDD.restaurant) {
-    card.innerHTML = `<div class="card" onclick="showView('plan')" style="border-left:4px solid var(--purple);"><div style="font-size:12px;font-weight:600;color:var(--purple);text-transform:uppercase;margin-bottom:4px;">Tonight's Dinner — Eating Out</div><div class="card-title">🍽️ ${esc(todayDD.restaurant)}</div><div class="card-sub">${todayDD.items?esc(todayDD.items):''}</div></div>`;
+    card.innerHTML = `<div class="card" onclick="showView('plan')"><div style="font-size:12px;font-weight:600;color:var(--purple);text-transform:uppercase;margin-bottom:4px;">Tonight's Dinner — Eating Out</div><div class="card-title">🍽️ ${esc(todayDD.restaurant)}</div><div class="card-sub">${todayDD.items?esc(todayDD.items):''}</div></div>`;
   } else if (todayIsEO) {
-    card.innerHTML = `<div class="card" onclick="showView('plan')" style="border-left:4px solid var(--purple);"><div style="font-size:12px;font-weight:600;color:var(--purple);text-transform:uppercase;margin-bottom:4px;">Tonight's Dinner — Eating Out</div><div class="card-title">🍽️ Eating out tonight</div><div class="card-sub">Tap to add details</div></div>`;
+    card.innerHTML = `<div class="card" onclick="showView('plan')"><div style="font-size:12px;font-weight:600;color:var(--purple);text-transform:uppercase;margin-bottom:4px;">Tonight's Dinner — Eating Out</div><div class="card-title">🍽️ Eating out tonight</div><div class="card-sub">Tap to add details</div></div>`;
   } else if (todayDD && todayDD.restaurant) {
-    card.innerHTML = `<div class="card" onclick="showView('plan')" style="border-left:4px solid #ff3008;"><div style="font-size:12px;font-weight:600;color:#ff3008;text-transform:uppercase;margin-bottom:4px;">Tonight's Dinner — DoorDash</div><div class="card-title">🛵 ${esc(todayDD.restaurant)}</div><div class="card-sub">${todayDD.items?esc(todayDD.items):''}${todayDD.cost?' · $'+Number(todayDD.cost).toFixed(2):''}</div></div>`;
+    card.innerHTML = `<div class="card" onclick="showView('plan')"><div style="font-size:12px;font-weight:600;color:#ff3008;text-transform:uppercase;margin-bottom:4px;">Tonight's Dinner — DoorDash</div><div class="card-title">🛵 ${esc(todayDD.restaurant)}</div><div class="card-sub">${todayDD.items?esc(todayDD.items):''}${todayDD.cost?' · $'+Number(todayDD.cost).toFixed(2):''}</div></div>`;
   } else if (todayDD) {
-    card.innerHTML = `<div class="card" onclick="showView('plan')" style="border-left:4px solid #ff3008;"><div style="font-size:12px;font-weight:600;color:#ff3008;text-transform:uppercase;margin-bottom:4px;">Tonight's Dinner — DoorDash</div><div class="card-title">🛵 DoorDash night</div><div class="card-sub">Tap to log your order</div></div>`;
+    card.innerHTML = `<div class="card" onclick="showView('plan')"><div style="font-size:12px;font-weight:600;color:#ff3008;text-transform:uppercase;margin-bottom:4px;">Tonight's Dinner — DoorDash</div><div class="card-title">🛵 DoorDash night</div><div class="card-sub">Tap to log your order</div></div>`;
   } else {
     const wNote = todayWeatherNote();
     card.innerHTML = tonight
@@ -1920,7 +1961,7 @@ function renderTip() {
     if (tipIndex >= _claudeTips.length) tipIndex = 0;
     if (tipIndex < 0) tipIndex = _claudeTips.length - 1;
     const tip = _claudeTips[tipIndex];
-    el.innerHTML = `<div class="tip-card" style="border-left:4px solid var(--purple);">
+    el.innerHTML = `<div class="tip-card">
       <div class="tip-header"><div class="tip-icon">🤖</div><div>
         <div class="tip-label">${esc(tip.category||'')} · for ${esc(tip.childName||'Family')}</div>
         <div class="tip-age">AI-personalized</div>
@@ -1941,7 +1982,7 @@ function renderTip() {
 
   // Loading state
   if (_claudeTipsLoading) {
-    el.innerHTML = `<div class="tip-card" style="border-left:4px solid var(--purple);padding:18px;">
+    el.innerHTML = `<div class="tip-card" style="padding:18px;">
       <div style="font-size:13px;font-weight:600;color:var(--purple);margin-bottom:8px;">🤖 Writing tips for your family...</div>
       <div class="skel" style="width:90%;"></div>
       <div class="skel" style="width:75%;"></div>
@@ -2229,7 +2270,7 @@ function renderRecipes() {
   if (standards.length) {
     dhtml += '<div style="margin-top:24px;"><h2 style="display:flex;align-items:center;gap:8px;">★ Your Standards</h2><p style="font-size:13px;color:var(--text-secondary);margin-bottom:10px;">Your family\'s greatest hits — made 3+ times.</p>';
     const { counts } = getRecipeStats();
-    dhtml += standards.slice(0,5).map(r => `<div class="card" onclick="showRecipeDetail('${r.id}')" style="border-left:3px solid var(--accent);"><div class="card-title">${esc(r.name)}</div><div class="card-sub">${r.cuisine?esc(r.cuisine)+' · ':''}Made ${counts[r.id]} times</div></div>`).join('');
+    dhtml += standards.slice(0,5).map(r => `<div class="card" onclick="showRecipeDetail('${r.id}')"><div class="card-title">${esc(r.name)}</div><div class="card-sub">${r.cuisine?esc(r.cuisine)+' · ':''}Made ${counts[r.id]} times</div></div>`).join('');
     dhtml += '</div>';
   }
 
@@ -2240,7 +2281,7 @@ function renderRecipes() {
     dhtml += '<div style="margin-top:24px;"><h2 style="display:flex;align-items:center;gap:8px;">🔄 Bring It Back</h2><p style="font-size:13px;color:var(--text-secondary);margin-bottom:10px;">Recipes you haven\'t made in a while.</p>';
     dhtml += bringBack.slice(0,5).map(r => {
       const last = lastUsed[r.id]; const ago = last ? Math.round((Date.now()-new Date(last).getTime())/(7*24*60*60*1000)) : '?';
-      return `<div class="card" onclick="showRecipeDetail('${r.id}')" style="border-left:3px solid var(--blue);"><div class="card-title">${esc(r.name)}</div><div class="card-sub">${r.cuisine?esc(r.cuisine)+' · ':''}Last made ~${ago} weeks ago</div></div>`;
+      return `<div class="card" onclick="showRecipeDetail('${r.id}')"><div class="card-title">${esc(r.name)}</div><div class="card-sub">${r.cuisine?esc(r.cuisine)+' · ':''}Last made ~${ago} weeks ago</div></div>`;
     }).join('');
     dhtml += '</div>';
   }
@@ -2249,7 +2290,7 @@ function renderRecipes() {
   const suggestions = getNewSuggestions();
   if (suggestions.length) {
     dhtml += '<div style="margin-top:24px;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;"><h2>✨ Try Something New</h2><button class="btn btn-secondary btn-sm" onclick="shuffleSuggestions()">Shuffle</button></div><p style="font-size:13px;color:var(--text-secondary);margin-bottom:10px;">Easy weeknight ideas to add to your book.</p>';
-    dhtml += suggestions.map((s, i) => `<div class="card" style="border-left:3px solid var(--green);"><div style="display:flex;justify-content:space-between;align-items:flex-start;"><div style="flex:1;"><div class="card-title">${esc(s.name)}</div><div class="card-sub">${esc(s.cuisine)} · ${esc(s.desc)}</div></div><button class="btn btn-sm btn-primary" onclick="event.stopPropagation();quickAddSuggestion(${i})" style="flex-shrink:0;margin-left:8px;">+ Add</button></div></div>`).join('');
+    dhtml += suggestions.map((s, i) => `<div class="card"><div style="display:flex;justify-content:space-between;align-items:flex-start;"><div style="flex:1;"><div class="card-title">${esc(s.name)}</div><div class="card-sub">${esc(s.cuisine)} · ${esc(s.desc)}</div></div><button class="btn btn-sm btn-primary" onclick="event.stopPropagation();quickAddSuggestion(${i})" style="flex-shrink:0;margin-left:8px;">+ Add</button></div></div>`).join('');
     dhtml += '</div>';
   }
 
@@ -3272,11 +3313,11 @@ function renderBlogFeed(items) {
   let blogHtml = '';
   if (!(data.blogs||[]).length) {
     // No blogs configured — show hint
-    blogHtml += `<div class="card" style="margin-bottom:16px;border-left:4px solid var(--purple);"><h3 style="margin-bottom:4px;">📰 Recipe Blogs</h3><p style="font-size:13px;color:var(--text-secondary);">Add your favorite food blogs in Settings to discover new recipes here!</p></div>`;
+    blogHtml += `<div class="card" style="margin-bottom:16px;"><h3 style="margin-bottom:4px;">📰 Recipe Blogs</h3><p style="font-size:13px;color:var(--text-secondary);">Add your favorite food blogs in Settings to discover new recipes here!</p></div>`;
   } else if (!items || !items.length) {
-    blogHtml += `<div class="card" style="margin-bottom:16px;border-left:4px solid var(--purple);"><h3 style="margin-bottom:4px;">📰 From Your Blogs</h3><p style="font-size:13px;color:var(--text-secondary);">${blogFeedLoading ? '⏳ Loading feeds...' : 'No posts found.'}</p>${!blogFeedLoading && blogFeedLastError ? '<p style="font-size:11px;color:var(--red);margin-top:4px;">'+esc(blogFeedLastError)+'</p>' : ''}${!blogFeedLoading ? '<p style="font-size:11px;color:var(--text-secondary);margin-top:4px;">Tip: Check browser console for detailed logs. Try popular blogs like pinchofyum.com or budgetbytes.com.</p>' : ''}</div>`;
+    blogHtml += `<div class="card" style="margin-bottom:16px;"><h3 style="margin-bottom:4px;">📰 From Your Blogs</h3><p style="font-size:13px;color:var(--text-secondary);">${blogFeedLoading ? '⏳ Loading feeds...' : 'No posts found.'}</p>${!blogFeedLoading && blogFeedLastError ? '<p style="font-size:11px;color:var(--red);margin-top:4px;">'+esc(blogFeedLastError)+'</p>' : ''}${!blogFeedLoading ? '<p style="font-size:11px;color:var(--text-secondary);margin-top:4px;">Tip: Check browser console for detailed logs. Try popular blogs like pinchofyum.com or budgetbytes.com.</p>' : ''}</div>`;
   } else {
-    blogHtml += `<div class="card" style="margin-bottom:16px;border-left:4px solid var(--purple);">`;
+    blogHtml += `<div class="card" style="margin-bottom:16px;">`;
     blogHtml += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;"><h3>📰 From Your Blogs</h3><button class="btn btn-sm btn-secondary" onclick="fetchBlogFeeds()" style="font-size:11px;">Refresh</button></div>`;
     items.forEach(item => {
       const timeAgo = getTimeAgo(new Date(item.pubDate));
@@ -3915,7 +3956,7 @@ function renderGrocery() {
     ci.forEach(item => {
       const key = item.name.toLowerCase();
       const checked = data.checkedItems[key] ? 'checked' : '';
-      html += `<div class="grocery-item ${checked}" data-key="${esc(key)}" onclick="toggleCheck(this,'${esc(key)}')"><input type="checkbox" ${checked}><span class="item-name">${esc(item.name)}</span><span class="item-qty">${esc(item.quantities.join(', '))}</span>${item.isExtra ? `<button onclick="event.stopPropagation();removeGroceryExtra('${esc(key)}')" style="margin-left:auto;background:none;border:none;color:var(--red);font-size:16px;padding:2px 6px;flex-shrink:0;">✕</button>` : ''}</div>`;
+      html += `<div class="grocery-item ${checked}" data-key="${esc(key)}" role="checkbox" aria-checked="${checked ? 'true' : 'false'}" onclick="toggleCheck(this,'${esc(key)}')"><span class="gcheck"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span><span class="item-name">${esc(item.name)}</span><span class="item-qty">${esc(item.quantities.join(', '))}</span>${item.isExtra ? `<button onclick="event.stopPropagation();removeGroceryExtra('${esc(key)}')" style="margin-left:auto;background:none;border:none;color:var(--red);font-size:16px;padding:2px 6px;flex-shrink:0;">✕</button>` : ''}</div>`;
     });
     html += '</div>';
   });
@@ -3963,14 +4004,8 @@ function celebrateGroceryDone() {
 function toggleCheck(el, key) {
   data.checkedItems[key] = !data.checkedItems[key];
   // Quick DOM update without full re-render
-  const cb = el.querySelector('input[type=checkbox]');
-  if (data.checkedItems[key]) {
-    el.classList.add('checked');
-    if (cb) cb.checked = true;
-  } else {
-    el.classList.remove('checked');
-    if (cb) cb.checked = false;
-  }
+  el.classList.toggle('checked', !!data.checkedItems[key]);
+  el.setAttribute('aria-checked', data.checkedItems[key] ? 'true' : 'false');
   persist();
   const { done, total } = updateGroceryProgress();
   if (total > 0 && done === total && !_groceryCelebrated) { _groceryCelebrated = true; celebrateGroceryDone(); }
@@ -4399,6 +4434,10 @@ if(familyCode) {
 } else {
   showSetup();
 }
+
+// Show which version this device is actually running (Settings → Sync card)
+const APP_VERSION = 'v23'; // keep in step with sw.js CACHE_NAME
+(function(){ const el = document.getElementById('appVersion'); if (el) el.textContent = 'App version: ' + APP_VERSION; })();
 
 // Resume kitchen display mode after a reload (e.g. dedicated iPad)
 if (localStorage.getItem('mp_fridge_mode') === '1' && familyCode) {
