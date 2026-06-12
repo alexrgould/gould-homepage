@@ -274,10 +274,6 @@ h3 { font-size: 13px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
 #cookMode .cook-nav button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
 
 /* --- Motion & delight --- */
-::view-transition-old(root) { animation-duration: 0.16s; }
-::view-transition-new(root) { animation-duration: 0.22s; }
-html.vt .view.active { animation: none; }
-
 @keyframes cardIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
 #view-home.active > * { animation: cardIn .45s cubic-bezier(.22,1,.36,1) backwards; }
 #view-home.active > *:nth-child(2) { animation-delay: .04s; }
@@ -1028,19 +1024,10 @@ function showView(name) {
   // Re-renders of the already-visible view (weather/calendar/sync refreshes) must NOT
   // touch the classes — re-adding .active restarts entrance animations and flickers
   if (!target.classList.contains('active')) {
-    const apply = () => {
-      document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-      document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
-      target.classList.add('active');
-      document.getElementById('nav-' + name).classList.add('active');
-    };
-    // Native cross-fade between tabs (Safari 18+ / Chrome); falls back to instant swap
-    if (document.startViewTransition && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      document.documentElement.classList.add('vt');
-      document.startViewTransition(apply).finished.finally(() => document.documentElement.classList.remove('vt'));
-    } else {
-      apply();
-    }
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+    target.classList.add('active');
+    document.getElementById('nav-' + name).classList.add('active');
   }
   if (name === 'home') renderHome();
   if (name === 'recipes') { renderRecipes(); if (!blogFeedCache.items || Date.now() - (blogFeedCache.fetchedAt||0) > 300000) fetchBlogFeeds(); else renderBlogFeed(blogFeedCache.items); }
@@ -4441,7 +4428,7 @@ if(familyCode) {
 }
 
 // Show which version this device is actually running (Settings → Sync card)
-const APP_VERSION = 'v25'; // keep in step with sw.js CACHE_NAME
+const APP_VERSION = 'v26'; // keep in step with sw.js CACHE_NAME
 (function(){ const el = document.getElementById('appVersion'); if (el) el.textContent = 'App version: ' + APP_VERSION; })();
 
 // Resume kitchen display mode after a reload (e.g. dedicated iPad)
