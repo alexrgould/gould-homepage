@@ -10,7 +10,8 @@
 <meta name="theme-color" content="#faf6ef">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,600;0,700;1,400;1,600&display=swap" rel="stylesheet">
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Fraunces:wght@400;600&display=optional">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@400;600&display=optional" rel="stylesheet">
 <title>Gould Family Homepage</title>
 
 <!-- Firebase SDK (from CDN — no install needed) -->
@@ -1023,19 +1024,23 @@ function leaveFamily() {
 // VIEW SWITCHING
 // ===========================================================================
 function showView(name) {
-  const apply = () => {
-    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-    document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
-    document.getElementById('view-' + name).classList.add('active');
-    document.getElementById('nav-' + name).classList.add('active');
-  };
-  // Native cross-fade between tabs (Safari 18+ / Chrome); falls back to instant swap
-  const wasActive = document.querySelector('.view.active');
-  if (document.startViewTransition && wasActive && wasActive.id !== 'view-' + name && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
-    document.documentElement.classList.add('vt');
-    document.startViewTransition(apply).finished.finally(() => document.documentElement.classList.remove('vt'));
-  } else {
-    apply();
+  const target = document.getElementById('view-' + name);
+  // Re-renders of the already-visible view (weather/calendar/sync refreshes) must NOT
+  // touch the classes — re-adding .active restarts entrance animations and flickers
+  if (!target.classList.contains('active')) {
+    const apply = () => {
+      document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+      document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+      target.classList.add('active');
+      document.getElementById('nav-' + name).classList.add('active');
+    };
+    // Native cross-fade between tabs (Safari 18+ / Chrome); falls back to instant swap
+    if (document.startViewTransition && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      document.documentElement.classList.add('vt');
+      document.startViewTransition(apply).finished.finally(() => document.documentElement.classList.remove('vt'));
+    } else {
+      apply();
+    }
   }
   if (name === 'home') renderHome();
   if (name === 'recipes') { renderRecipes(); if (!blogFeedCache.items || Date.now() - (blogFeedCache.fetchedAt||0) > 300000) fetchBlogFeeds(); else renderBlogFeed(blogFeedCache.items); }
@@ -4436,7 +4441,7 @@ if(familyCode) {
 }
 
 // Show which version this device is actually running (Settings → Sync card)
-const APP_VERSION = 'v23'; // keep in step with sw.js CACHE_NAME
+const APP_VERSION = 'v25'; // keep in step with sw.js CACHE_NAME
 (function(){ const el = document.getElementById('appVersion'); if (el) el.textContent = 'App version: ' + APP_VERSION; })();
 
 // Resume kitchen display mode after a reload (e.g. dedicated iPad)

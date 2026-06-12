@@ -1,4 +1,4 @@
-const CACHE_NAME = 'meal-planner-v23';
+const CACHE_NAME = 'meal-planner-v25';
 const ASSETS = [
   './index.html',
   './manifest.json'
@@ -25,6 +25,18 @@ self.addEventListener('fetch', event => {
 
   // Only handle GET — let POSTs (Claude proxy, etc.) go straight to the network
   if (event.request.method !== 'GET') return;
+
+  // Fonts: cache-first so the serif renders instantly and works offline
+  if (url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com') {
+    event.respondWith(
+      caches.match(event.request).then(cached => cached || fetch(event.request).then(response => {
+        const clone = response.clone();
+        caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
+        return response;
+      }))
+    );
+    return;
+  }
 
   // Don't cache Firebase or external API calls
   if (url.hostname.includes('firebase') ||
