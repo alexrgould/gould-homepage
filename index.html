@@ -1461,7 +1461,7 @@ function renderCalendarSummary() {
 
 let _calClaudeCache = {};
 async function enhanceCalendarWithClaude(twEvents, nwEvents, today, thisSunday, nextMonday, nextSunday) {
-  const proxyUrl = localStorage.getItem('claude_proxy_url');
+  const proxyUrl = getProxyUrl();
   if (!proxyUrl) return;
 
   // Cache key based on date + event content, so edited events (same count) refresh the summary
@@ -1945,7 +1945,7 @@ function renderTip() {
     return;
   }
 
-  const proxyUrl = localStorage.getItem('claude_proxy_url');
+  const proxyUrl = getProxyUrl();
   const hasClaude = !!proxyUrl;
 
   // If we have cached Claude tips, show them
@@ -2002,7 +2002,7 @@ function renderTip() {
 }
 
 async function refreshClaudeTips() {
-  const proxyUrl = localStorage.getItem('claude_proxy_url');
+  const proxyUrl = getProxyUrl();
   if (!proxyUrl) { toast('Set up Claude AI in Settings first'); showView('sync'); return; }
 
   const children = data.children || [];
@@ -2017,7 +2017,7 @@ async function refreshClaudeTips() {
   renderTip();
 
   try {
-    const philosophy = localStorage.getItem('parenting_philosophy') || '';
+    const philosophy = getPhilosophy();
     const consequences = (data.consequences || []).filter(c => !c.resolved).map(c => `${c.child}: ${c.description} (${c.days} days)`);
     const recentResolved = (data.consequences || []).filter(c => c.resolved).slice(-5).map(c => `${c.child}: ${c.description}`);
     const dayName = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
@@ -2075,7 +2075,7 @@ function saveParentingPhilosophy() {
 }
 function loadParentingPhilosophy() {
   const el = document.getElementById('parentPhilosophy');
-  if (el) el.value = localStorage.getItem('parenting_philosophy') || '';
+  if (el) el.value = getPhilosophy();
 }
 
 // (Claude-powered tips are now generated on-demand via refreshClaudeTips() above)
@@ -2087,7 +2087,7 @@ let parentChatHistory = loadChatHistory('mp_parent_chat');
 function clearParentChat() { parentChatHistory = []; saveChatHistory('mp_parent_chat', []); renderParentChatMessages(); }
 
 function openParentChatModal() {
-  const proxyUrl = localStorage.getItem('claude_proxy_url');
+  const proxyUrl = getProxyUrl();
   if (!proxyUrl) { toast('Set up Claude AI in Settings first'); showView('sync'); return; }
   document.getElementById('parentChatModal').classList.add('open');
   if (!parentChatHistory.length) {
@@ -2135,7 +2135,7 @@ async function sendParentChatMessage() {
       const age = getChildAge(c.birthday);
       return age ? `${c.name} (${ageLabel(age)})` : c.name;
     });
-    const philosophy = localStorage.getItem('parenting_philosophy') || '';
+    const philosophy = getPhilosophy();
     const activeConsequences = (data.consequences || []).filter(c => !c.resolved).map(c => `${c.child}: "${c.description}" — ${c.days} day duration, started ${c.startDate}`);
     const pastConsequences = (data.consequences || []).filter(c => c.resolved).slice(-10).map(c => `${c.child}: "${c.description}" (resolved)`);
 
@@ -2308,7 +2308,7 @@ function showRecipeDetail(id) {
   if (safeUrl(r.url)) html += `<p style="margin-bottom:12px;"><a href="${safeUrl(r.url)}" target="_blank" rel="noopener" style="color:var(--blue);font-size:14px;">View original recipe &rarr;</a></p>`;
   html += '<h3 style="margin-bottom:8px;">Ingredients</h3>';
   if (r.ingredients.length) {
-    const hasClaudeKey = !!localStorage.getItem('claude_proxy_url');
+    const hasClaudeKey = !!getProxyUrl();
     html += '<ul style="padding-left:18px;margin-bottom:16px;">';
     r.ingredients.forEach((ing, idx) => {
       html += `<li style="margin-bottom:4px;font-size:15px;display:flex;align-items:center;gap:6px;">`;
@@ -2596,6 +2596,22 @@ function saveNutritionKey() {
 // CLAUDE AI INTEGRATION
 // ===========================================================================
 
+// Baked-in default so Claude features keep working even if iOS clears local storage.
+// A value saved in Settings still overrides this.
+const DEFAULT_PROXY_URL = 'https://claude-proxy.alex-r-gould.workers.dev';
+function getProxyUrl() { return localStorage.getItem('claude_proxy_url') || DEFAULT_PROXY_URL; }
+// Baked-in parenting philosophy fallback (used when none is saved locally).
+const DEFAULT_PHILOSOPHY = `You are a parenting advisor aligned with our family's philosophy. Use the following as your foundation:
+Core principles:
+• Connection before correction. Behavior is communication. Meet the child with empathy first, then redirect. (Dr. Becky Kennedy, No-Drama Discipline)
+• Respect the developing brain. Kids aren't being difficult - they're being young. Regulate yourself first, then co-regulate with them. (The Whole-Brain Child)
+• Communicate with respect. Offer explanations, choices, and genuine listening rather than commands. (How to Talk So Kids Will Listen, Montessori Toddler)
+• Calm, consistent structure. Clear limits, low drama, reliable follow-through. (1-2-3 Magic, Peaceful Parent)
+• Evidence over anxiety. Ground decisions in data and actual risk, not cultural fear. (Emily Oster)
+• Safety as baseline. Follow AAP guidance for health and development decisions.
+Tone: Warm, non-judgmental, practical. Avoid fear-based or shame-based framing. When in doubt, default to connection.`;
+function getPhilosophy() { return localStorage.getItem('parenting_philosophy') || DEFAULT_PHILOSOPHY; }
+
 const CLAUDE_FEATURES = ['mealplan','recipechat','substitutions','calendar','tips','parentchat'];
 const CLAUDE_MODEL_DEFAULTS = {
   mealplan: 'claude-sonnet-4-6',
@@ -2638,7 +2654,7 @@ function loadClaudeSettings() {
   const keyEl = document.getElementById('claudeApiKey');
   const proxyEl = document.getElementById('claudeProxyUrl');
   if (keyEl) keyEl.value = localStorage.getItem('claude_api_key') || '';
-  if (proxyEl) proxyEl.value = localStorage.getItem('claude_proxy_url') || '';
+  if (proxyEl) proxyEl.value = getProxyUrl();
   CLAUDE_FEATURES.forEach(f => {
     const el = document.getElementById('claudeModel_' + f);
     if (el) el.value = getModelForFeature(f);
@@ -2710,7 +2726,7 @@ function showProxyInstructions() {
 
 async function callClaude(userPrompt, opts = {}) {
   const apiKey = localStorage.getItem('claude_api_key');
-  const proxyUrl = normalizeProxyUrl(localStorage.getItem('claude_proxy_url'));
+  const proxyUrl = normalizeProxyUrl(getProxyUrl());
   if (!proxyUrl) throw new Error('No proxy URL. Set up a Cloudflare Worker — see Settings.');
 
   const systemPrompt = opts.system || '';
@@ -2763,7 +2779,7 @@ async function testClaudeConnection() {
 
 // --- SMART MEAL PLANNING ---
 async function smartMealPlan() {
-  const proxyUrl = localStorage.getItem('claude_proxy_url');
+  const proxyUrl = getProxyUrl();
   if (!proxyUrl) { toast('Set up Claude AI in Settings first'); showView('sync'); return; }
 
   // Gather context
@@ -2866,7 +2882,7 @@ let chatHistory = loadChatHistory('mp_recipe_chat');
 function clearRecipeChat() { chatHistory = []; saveChatHistory('mp_recipe_chat', []); renderChatMessages(); }
 
 function openChatModal() {
-  const proxyUrl = localStorage.getItem('claude_proxy_url');
+  const proxyUrl = getProxyUrl();
   if (!proxyUrl) { toast('Set up Claude AI in Settings first'); showView('sync'); return; }
   document.getElementById('chatModal').classList.add('open');
   if (!chatHistory.length) {
@@ -2938,7 +2954,7 @@ let _currentSubRecipe = '';
 let _currentSubIngredient = '';
 
 async function suggestSubstitution(ingredientName, recipeName) {
-  const proxyUrl = localStorage.getItem('claude_proxy_url');
+  const proxyUrl = getProxyUrl();
   if (!proxyUrl) { toast('Set up Claude AI in Settings first'); return; }
 
   _currentSubRecipe = recipeName;
@@ -3000,7 +3016,7 @@ function applySubstitution(newIngredientName) {
 
 // --- CLAUDE CALENDAR SUMMARIES ---
 async function generateCalendarSummary(events, weekLabel) {
-  const proxyUrl = localStorage.getItem('claude_proxy_url');
+  const proxyUrl = getProxyUrl();
   if (!proxyUrl) return null;
 
   const kidAges = (data.children || []).map(c => {
@@ -4428,7 +4444,7 @@ if(familyCode) {
 }
 
 // Show which version this device is actually running (Settings → Sync card)
-const APP_VERSION = 'v26'; // keep in step with sw.js CACHE_NAME
+const APP_VERSION = 'v28'; // keep in step with sw.js CACHE_NAME
 (function(){ const el = document.getElementById('appVersion'); if (el) el.textContent = 'App version: ' + APP_VERSION; })();
 
 // Resume kitchen display mode after a reload (e.g. dedicated iPad)
