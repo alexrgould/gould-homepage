@@ -2781,7 +2781,7 @@ function saveNutritionKey() {
 const DEFAULT_PROXY_URL = 'https://claude-proxy.alex-r-gould.workers.dev';
 function getProxyUrl() { return localStorage.getItem('claude_proxy_url') || DEFAULT_PROXY_URL; }
 // Anova personal access token — hardcode here (like the proxy) so it survives storage wipes.
-const DEFAULT_ANOVA_PAT = 'anova-eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOiJkbWx3TTZGNzV0T2pYYUpCblBQTDhRdGtqSncxIiwiY3JlYXRlZEF0IjoxNzgxODYyNDc1Mjk0fQ.OUI-hlM8nZKUVXv3Cw5eLwXxU_1f97s_cnZ16Eb-GvY';
+const DEFAULT_ANOVA_PAT = '';
 function getAnovaPat() { return (localStorage.getItem('anova_pat') || DEFAULT_ANOVA_PAT || '').trim(); }
 // Baked-in parenting philosophy fallback (used when none is saved locally).
 const DEFAULT_PHILOSOPHY = `You are a parenting advisor aligned with our family's philosophy. Use the following as your foundation:
@@ -4998,12 +4998,28 @@ function deepFindCurrentTemp(o) {
   })(o);
   return found;
 }
+// Exact current-temperature paths confirmed from real EVENT_APC_STATE / EVENT_APO_STATE
+function extractAnovaTemp(msg, dev) {
+  const st = msg.payload && msg.payload.state;
+  if (!st) return deepFindCurrentTemp(msg);
+  if (dev.accessory === 'APC') {
+    const ti = st['temperature-info'];
+    if (ti && typeof ti['water-temperature'] === 'number') return ti['water-temperature'];
+  } else {
+    const tb = st.nodes && st.nodes.temperatureBulbs;
+    if (tb) {
+      if (tb.dry && tb.dry.current && typeof tb.dry.current.celsius === 'number') return tb.dry.current.celsius;
+      if (tb.wet && tb.wet.current && typeof tb.wet.current.celsius === 'number') return tb.wet.current.celsius;
+    }
+  }
+  return deepFindCurrentTemp(msg);
+}
 function updateAnovaState(msg) {
   const p = msg.payload || {};
   const id = p.cookerId || p.id || msg.cookerId || (p.payload && (p.payload.cookerId || p.payload.id));
   if (id && _anovaDevices[id]) {
     _anovaDevices[id].last = msg;
-    const c = deepFindCurrentTemp(msg);
+    const c = extractAnovaTemp(msg, _anovaDevices[id]);
     // Update ONLY the live-temp text — never re-render the cards, or it would
     // close open dropdowns and wipe inputs mid-interaction.
     if (c != null) {
@@ -5167,8 +5183,11 @@ if(familyCode) {
 }
 
 // Show which version this device is actually running (Settings → Sync card)
-const APP_VERSION = 'v36'; // keep in step with sw.js CACHE_NAME
+const APP_VERSION = 'v37'; // keep in step with sw.js CACHE_NAME
 (function(){ const el = document.getElementById('appVersion'); if (el) el.textContent = 'App version: ' + APP_VERSION; })();
+
+// Auto-connect to Anova on load if a token is set, so devices are ready everywhere
+if (getAnovaPat()) { try { anovaConnect(); } catch (e) {} }
 
 // Resume kitchen display mode after a reload (e.g. dedicated iPad)
 if (localStorage.getItem('mp_fridge_mode') === '1' && familyCode) {
