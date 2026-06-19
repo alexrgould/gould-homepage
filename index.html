@@ -2041,9 +2041,9 @@ function renderHome() {
   } else if (todayIsEO) {
     card.innerHTML = `<div class="card" onclick="showView('plan')"><div style="font-size:12px;font-weight:600;color:var(--purple);text-transform:uppercase;margin-bottom:4px;">Tonight's Dinner — Eating Out</div><div class="card-title">🍽️ Eating out tonight</div><div class="card-sub">Tap to add details</div></div>`;
   } else if (todayDD && todayDD.restaurant) {
-    card.innerHTML = `<div class="card" onclick="showView('plan')"><div style="font-size:12px;font-weight:600;color:#ff3008;text-transform:uppercase;margin-bottom:4px;">Tonight's Dinner — DoorDash</div><div class="card-title">🛵 ${esc(todayDD.restaurant)}</div><div class="card-sub">${todayDD.items?esc(todayDD.items):''}${todayDD.cost?' · $'+Number(todayDD.cost).toFixed(2):''}</div></div>`;
+    card.innerHTML = `<div class="card"><div onclick="showView('plan')"><div style="font-size:12px;font-weight:600;color:#ff3008;text-transform:uppercase;margin-bottom:4px;">Tonight's Dinner — DoorDash</div><div class="card-title">🛵 ${esc(todayDD.restaurant)}</div><div class="card-sub">${todayDD.items?esc(todayDD.items):''}${todayDD.cost?' · $'+Number(todayDD.cost).toFixed(2):''}</div></div><button class="btn btn-primary btn-sm" style="margin-top:10px;background:#ff3008;" onclick="event.stopPropagation();openDoorDash('${esc(todayDD.restaurant).replace(/'/g,"\\'")}')">🛵 Open DoorDash</button></div>`;
   } else if (todayDD) {
-    card.innerHTML = `<div class="card" onclick="showView('plan')"><div style="font-size:12px;font-weight:600;color:#ff3008;text-transform:uppercase;margin-bottom:4px;">Tonight's Dinner — DoorDash</div><div class="card-title">🛵 DoorDash night</div><div class="card-sub">Tap to log your order</div></div>`;
+    card.innerHTML = `<div class="card"><div onclick="showView('plan')"><div style="font-size:12px;font-weight:600;color:#ff3008;text-transform:uppercase;margin-bottom:4px;">Tonight's Dinner — DoorDash</div><div class="card-title">🛵 DoorDash night</div><div class="card-sub">Tap to log your order</div></div><button class="btn btn-primary btn-sm" style="margin-top:10px;background:#ff3008;" onclick="event.stopPropagation();openDoorDash('')">🛵 Open DoorDash</button></div>`;
   } else {
     const wNote = todayWeatherNote();
     card.innerHTML = tonight
@@ -2781,7 +2781,7 @@ function saveNutritionKey() {
 const DEFAULT_PROXY_URL = 'https://claude-proxy.alex-r-gould.workers.dev';
 function getProxyUrl() { return localStorage.getItem('claude_proxy_url') || DEFAULT_PROXY_URL; }
 // Anova personal access token — hardcode here (like the proxy) so it survives storage wipes.
-const DEFAULT_ANOVA_PAT = 'anova-eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOiJkbWx3TTZGNzV0T2pYYUpCblBQTDhRdGtqSncxIiwiY3JlYXRlZEF0IjoxNzgxODYyNDc1Mjk0fQ.OUI-hlM8nZKUVXv3Cw5eLwXxU_1f97s_cnZ16Eb-GvY';
+const DEFAULT_ANOVA_PAT = '';
 function getAnovaPat() { return (localStorage.getItem('anova_pat') || DEFAULT_ANOVA_PAT || '').trim(); }
 // Baked-in parenting philosophy fallback (used when none is saved locally).
 const DEFAULT_PHILOSOPHY = `You are a parenting advisor aligned with our family's philosophy. Use the following as your foundation:
@@ -3812,7 +3812,7 @@ function renderMealPlan() {
 
       if (order && currentRest && !order._editing) {
         html+=`<div class="dd-logged"><span class="dd-restaurant">${esc(currentRest)}</span>${order.items?' · '+esc(order.items):''}${order.cost?' · <span class="dd-cost">$'+Number(order.cost).toFixed(2)+'</span>':''}</div>`;
-        html+=`<button class="btn btn-sm btn-secondary" onclick="editDoorDash('${dk}')" style="font-size:12px;">Edit</button>`;
+        html+=`<div style="display:flex;gap:6px;"><button class="btn btn-sm btn-primary" style="font-size:12px;background:#ff3008;" onclick="openDoorDash('${esc(currentRest).replace(/'/g,"\\'")}')">🛵 Open DoorDash</button><button class="btn btn-sm btn-secondary" onclick="editDoorDash('${dk}')" style="font-size:12px;">Edit</button></div>`;
       } else {
         // Restaurant picker
         html+=`<select onchange="setDDRestaurant('${dk}',this.value)"><option value="">— pick a restaurant —</option>${filteredRests.map(r=>`<option ${currentRest===r.name?'selected':''}>${esc(r.name)}</option>`).join('')}<option value="__custom__"${!currentRest||filteredRests.some(r=>r.name===currentRest)?'':' selected'}>Other...</option></select>`;
@@ -4385,6 +4385,10 @@ function loadChatHistory(key){try{const h=JSON.parse(localStorage.getItem(key));
 function saveChatHistory(key,hist){try{localStorage.setItem(key,JSON.stringify(hist.slice(-40)));}catch(e){}}
 // Only allow http(s) URLs in href/src built from external content (RSS feeds etc.)
 function safeUrl(u){if(!u)return'';try{const p=new URL(u,location.href);if(p.protocol==='http:'||p.protocol==='https:')return esc(p.href);}catch(e){}return'';}
+// Deep link into DoorDash — to a restaurant search when known, else the home page.
+// Universal links open the DoorDash app on phones when it's installed.
+function doordashUrl(name){ return name ? 'https://www.doordash.com/search/?query=' + encodeURIComponent(name) : 'https://www.doordash.com/'; }
+function openDoorDash(name){ window.open(doordashUrl(name), '_blank', 'noopener'); }
 function downloadFile(name,content,type){const b=new Blob([content],{type});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=name;a.click();URL.revokeObjectURL(a.href);}
 function toast(msg){const el=document.getElementById('toast');el.textContent=msg;el.classList.add('show');setTimeout(()=>el.classList.remove('show'),3000);}
 
@@ -4784,27 +4788,40 @@ function renderFridgeMode() {
   const gVal = gIn ? gIn.value : '';
   const gFocused = gIn && document.activeElement === gIn;
 
-  // Tonight's dinner — name, cook time, recommended start, launch button
-  const cookMin = estimateCookMinutes(tonight);
-  let metaLine = '';
-  if (tonight && cookMin) {
-    const rec = recommendedStart(cookMin);
-    const now = new Date();
-    if (now < rec.start) metaLine = `Start by <strong>${fmtTime(rec.start)}</strong> to eat at ${fmtTime(rec.dinner)}`;
-    else if (now < rec.dinner) metaLine = `Start soon to eat by ${fmtTime(rec.dinner)}`;
+  // Tonight's dinner — reflect cooking, DoorDash, or eating out
+  const todayDD = (data.doordash || { orders: [] }).orders.find(o => o.date === todayKey);
+  let dinnerLabel = "Tonight's dinner", dinnerInner;
+  if (todayDD && todayDD.mode === 'eatingout') {
+    dinnerLabel = "Tonight — Eating out";
+    dinnerInner = `<div class="fm-dish">🍽️ ${todayDD.restaurant ? esc(todayDD.restaurant) : 'Eating out'}</div>${todayDD.items ? '<div class="fm-dish-sub">' + esc(todayDD.items) + '</div>' : ''}`;
+  } else if (todayDD) {
+    dinnerLabel = "Tonight — DoorDash";
+    const cost = todayDD.cost ? ' · $' + Number(todayDD.cost).toFixed(2) : '';
+    dinnerInner = `<div class="fm-dish">🛵 ${todayDD.restaurant ? esc(todayDD.restaurant) : 'DoorDash night'}</div>
+       ${(todayDD.items || todayDD.cost) ? '<div class="fm-dish-sub">' + esc(todayDD.items || '') + cost + '</div>' : ''}
+       <button class="fm-cook-btn" style="background:#ff3008;" onclick="openDoorDash('${todayDD.restaurant ? esc(todayDD.restaurant).replace(/'/g,"\\'") : ''}')">🛵 Open DoorDash</button>`;
+  } else {
+    const cookMin = estimateCookMinutes(tonight);
+    let metaLine = '';
+    if (tonight && cookMin) {
+      const rec = recommendedStart(cookMin);
+      const now = new Date();
+      if (now < rec.start) metaLine = `Start by <strong>${fmtTime(rec.start)}</strong> to eat at ${fmtTime(rec.dinner)}`;
+      else if (now < rec.dinner) metaLine = `Start soon to eat by ${fmtTime(rec.dinner)}`;
+    }
+    const subBits = [];
+    if (tonight && tonight.cuisine) subBits.push(esc(tonight.cuisine));
+    if (cookMin) subBits.push('⏱ ' + cookMin + ' min');
+    dinnerInner = tonight
+      ? `<div class="fm-dish">${esc(tonight.name)}</div>
+         ${subBits.length ? '<div class="fm-dish-sub">' + subBits.join(' · ') + '</div>' : ''}
+         ${metaLine ? '<div class="fm-dish-meta">' + metaLine + '</div>' : ''}
+         <button class="fm-cook-btn" onclick="openCookMode('${tonight.id}')">👨‍🍳 Start cooking</button>`
+      : `<div class="fm-dish">Not planned yet</div><div class="fm-dish-sub">Open the app to pick something</div>`;
   }
-  const subBits = [];
-  if (tonight && tonight.cuisine) subBits.push(esc(tonight.cuisine));
-  if (cookMin) subBits.push('⏱ ' + cookMin + ' min');
-  const dinnerInner = tonight
-    ? `<div class="fm-dish">${esc(tonight.name)}</div>
-       ${subBits.length ? '<div class="fm-dish-sub">' + subBits.join(' · ') + '</div>' : ''}
-       ${metaLine ? '<div class="fm-dish-meta">' + metaLine + '</div>' : ''}
-       <button class="fm-cook-btn" onclick="openCookMode('${tonight.id}')">👨‍🍳 Start cooking</button>`
-    : `<div class="fm-dish">Not planned yet</div><div class="fm-dish-sub">Open the app to pick something</div>`;
 
   document.getElementById('fmGrid').innerHTML = `
-    <div class="fm-card fm-dinner"><h4>Tonight's dinner</h4>${dinnerInner}</div>
+    <div class="fm-card fm-dinner"><h4>${dinnerLabel}</h4>${dinnerInner}</div>
     <div class="fm-card"><h4>Today</h4><div class="fm-list">${evHtml}</div></div>
     <div class="fm-card"><h4>Add to grocery</h4>
       <div class="fm-add-row">
@@ -4953,13 +4970,17 @@ function handleAnovaMessage(raw) {
 function registerAnovaDevices(list, accessory) {
   (list || []).forEach(d => {
     const id = d.cookerId || d.id; if (!id) return;
+    if (!_anovaDevices[id]) _anovaNewDevice = true; // a device we haven't seen before
     _anovaDevices[id] = Object.assign(_anovaDevices[id] || {}, {
       id, name: d.name || (accessory === 'APO' ? 'Precision Oven' : 'Precision Cooker'), type: d.type || '', accessory
     });
   });
   setAnovaStatus(Object.keys(_anovaDevices).length + ' device(s) connected.');
-  renderAnovaDevices();
+  // Only rebuild the cards when the device set actually changed — repeated
+  // device-list messages must not nuke the controls you're using.
+  if (_anovaNewDevice) { _anovaNewDevice = false; renderAnovaDevices(); }
 }
+let _anovaNewDevice = false;
 // Live status shape isn't in the docs — find a "current" temperature defensively,
 // and keep the raw log so we can calibrate against the real device on first connect.
 function deepFindCurrentTemp(o) {
@@ -4983,8 +5004,13 @@ function updateAnovaState(msg) {
   if (id && _anovaDevices[id]) {
     _anovaDevices[id].last = msg;
     const c = deepFindCurrentTemp(msg);
-    if (c != null) _anovaDevices[id].liveC = c;
-    renderAnovaDevices();
+    // Update ONLY the live-temp text — never re-render the cards, or it would
+    // close open dropdowns and wipe inputs mid-interaction.
+    if (c != null) {
+      _anovaDevices[id].liveC = c;
+      const el = document.getElementById('anova-live-' + id);
+      if (el) el.innerHTML = cToF(c) + '°F <span style="font-size:13px;color:var(--text-secondary);">now</span>';
+    }
   }
 }
 
@@ -4997,7 +5023,7 @@ function renderAnovaDevices() {
   if (!ids.length) { el.innerHTML = '<p style="font-size:15px;color:var(--text-secondary);">No devices yet. Connect with your token and make sure they\'re online in the Anova app.</p>'; return; }
   el.innerHTML = ids.map(id => {
     const d = _anovaDevices[id];
-    const live = d.liveC != null ? `<div class="anova-live">${cToF(d.liveC)}°F <span style="font-size:13px;color:var(--text-secondary);">now</span></div>` : '';
+    const live = `<div class="anova-live" id="anova-live-${id}">${d.liveC != null ? cToF(d.liveC) + '°F <span style="font-size:13px;color:var(--text-secondary);">now</span>' : ''}</div>`;
     if (d.accessory === 'APC') {
       return `<div class="anova-card"><div class="anova-head"><span class="anova-name">🍲 ${esc(d.name)}</span></div>${live}
         <div class="anova-row"><label>Temp °F</label><input type="number" id="apc-temp-${id}" value="135" min="32" max="210"></div>
@@ -5141,7 +5167,7 @@ if(familyCode) {
 }
 
 // Show which version this device is actually running (Settings → Sync card)
-const APP_VERSION = 'v34'; // keep in step with sw.js CACHE_NAME
+const APP_VERSION = 'v36'; // keep in step with sw.js CACHE_NAME
 (function(){ const el = document.getElementById('appVersion'); if (el) el.textContent = 'App version: ' + APP_VERSION; })();
 
 // Resume kitchen display mode after a reload (e.g. dedicated iPad)
