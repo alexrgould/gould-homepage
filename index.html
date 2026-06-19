@@ -2781,7 +2781,7 @@ function saveNutritionKey() {
 const DEFAULT_PROXY_URL = 'https://claude-proxy.alex-r-gould.workers.dev';
 function getProxyUrl() { return localStorage.getItem('claude_proxy_url') || DEFAULT_PROXY_URL; }
 // Anova personal access token — hardcode here (like the proxy) so it survives storage wipes.
-const DEFAULT_ANOVA_PAT = 'anova-eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOiJkbWx3TTZGNzV0T2pYYUpCblBQTDhRdGtqSncxIiwiY3JlYXRlZEF0IjoxNzgxODYyNDc1Mjk0fQ.OUI-hlM8nZKUVXv3Cw5eLwXxU_1f97s_cnZ16Eb-GvY;
+const DEFAULT_ANOVA_PAT = 'anova-eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOiJkbWx3TTZGNzV0T2pYYUpCblBQTDhRdGtqSncxIiwiY3JlYXRlZEF0IjoxNzgxODYyNDc1Mjk0fQ.OUI-hlM8nZKUVXv3Cw5eLwXxU_1f97s_cnZ16Eb-GvY';
 function getAnovaPat() { return (localStorage.getItem('anova_pat') || DEFAULT_ANOVA_PAT || '').trim(); }
 // Baked-in parenting philosophy fallback (used when none is saved locally).
 const DEFAULT_PHILOSOPHY = `You are a parenting advisor aligned with our family's philosophy. Use the following as your foundation:
