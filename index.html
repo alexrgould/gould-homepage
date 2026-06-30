@@ -589,6 +589,14 @@ nav button.active svg { animation: tabSpring .4s cubic-bezier(.34,1.56,.64,1); }
         <input type="time" id="factReadTime" onchange="saveFridgeSettings()">
         <p style="font-size:12px;color:var(--text-secondary);margin-top:4px;">When the display is open, it'll read the daily fact to Reed &amp; Riley at this time. Leave blank to turn off.</p>
       </div>
+      <div class="form-group">
+        <label>Reading voice</label>
+        <div style="display:flex;gap:6px;">
+          <select id="factVoice" onchange="saveFridgeSettings()" style="flex:1;"><option value="">Auto (best available)</option></select>
+          <button class="btn btn-secondary btn-sm" onclick="testFactVoice()">Test</button>
+        </div>
+        <p style="font-size:12px;color:var(--text-secondary);margin-top:4px;">For the best sound on iPad: Settings → Accessibility → Spoken Content → Voices → English → download an <strong>Enhanced</strong> or <strong>Premium</strong> voice (e.g., Evan, Ava, Nicky), then pick it here.</p>
+      </div>
       <button class="btn btn-secondary" style="width:100%;" onclick="openFridgeMode()">🖥️ Open Kitchen Display</button>
     </div>
 
@@ -601,6 +609,20 @@ nav button.active svg { animation: tabSpring .4s cubic-bezier(.34,1.56,.64,1); }
       </div>
       <div id="anovaStatus" style="font-size:12px;color:var(--text-secondary);margin-bottom:8px;"></div>
       <button class="btn btn-secondary" style="width:100%;" onclick="openAnovaModal()">🔥 Open Appliance Controls</button>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
+      <h3 style="margin-bottom:4px;">Sonos <span style="font-size:11px;font-weight:600;color:var(--purple);background:var(--purple-light);padding:2px 8px;border-radius:999px;vertical-align:middle;">BETA</span></h3>
+      <p style="font-size:13px; color:var(--text-secondary); margin-bottom:10px;">Play/pause, volume, skip, and favorites on your Sonos. Needs a Sonos developer integration (Client ID below, Secret on the Worker) — see the setup notes. Uses the official cloud Control API.</p>
+      <div style="display:flex; gap:6px; margin-bottom:8px;">
+        <input type="text" id="sonosClientId" placeholder="Sonos Client ID (leave empty if hardcoded)" style="flex:1; padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-size:13px;">
+        <button class="btn btn-secondary btn-sm" onclick="saveSonosClientId()">Save</button>
+      </div>
+      <div id="sonosSettingsStatus" style="font-size:12px;color:var(--text-secondary);margin-bottom:8px;"></div>
+      <div style="display:flex; gap:6px;">
+        <button class="btn btn-secondary" style="flex:1;" onclick="connectSonos()">🔗 Connect Sonos</button>
+        <button class="btn btn-secondary" style="flex:1;" onclick="openSonosModal()">🎵 Open Controls</button>
+      </div>
     </div>
 
     <div class="card" style="margin-bottom:16px;">
@@ -891,6 +913,18 @@ nav button.active svg { animation: tabSpring .4s cubic-bezier(.34,1.56,.64,1); }
   </div>
   <div id="fmAppStatus" style="font-size:14px;color:var(--text-secondary);margin-bottom:14px;"></div>
   <div id="fmAppDevices"></div>
+</div>
+
+<!-- SONOS CONTROLS (beta) -->
+<div class="modal-overlay" id="sonosModal">
+  <div class="modal">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+      <h2>Sonos <span style="font-size:11px;font-weight:600;color:var(--purple);background:var(--purple-light);padding:2px 8px;border-radius:999px;">BETA</span></h2>
+      <button style="background:none; border:none; font-size:24px; color:var(--text-secondary);" onclick="closeSonosModal()">&times;</button>
+    </div>
+    <div id="sonosStatus" style="font-size:13px;color:var(--text-secondary);margin-bottom:12px;"></div>
+    <div id="sonosBody"></div>
+  </div>
 </div>
 
 <!-- ANOVA APPLIANCE CONTROLS (beta) -->
@@ -1200,7 +1234,7 @@ function showView(name) {
   if (name === 'plan') renderMealPlan();
   if (name === 'grocery') renderGrocery();
   if (name === 'staples') renderStaples();
-  if (name === 'sync') { renderDoorDashSettings(); updateCalendarSettingsUI(); renderCuisines(); renderSync(); renderKids(); renderBlogsList(); const nk=document.getElementById('nutritionApiKey'); if(nk) nk.value=localStorage.getItem('nutrition_api_key')||''; loadClaudeSettings(); loadParentingPhilosophy(); loadFridgeSettings(); loadAnovaPat(); }
+  if (name === 'sync') { renderDoorDashSettings(); updateCalendarSettingsUI(); renderCuisines(); renderSync(); renderKids(); renderBlogsList(); const nk=document.getElementById('nutritionApiKey'); if(nk) nk.value=localStorage.getItem('nutrition_api_key')||''; loadClaudeSettings(); loadParentingPhilosophy(); loadFridgeSettings(); loadAnovaPat(); loadSonosSettings(); }
 }
 
 // ===========================================================================
@@ -2781,8 +2815,12 @@ function saveNutritionKey() {
 const DEFAULT_PROXY_URL = 'https://claude-proxy.alex-r-gould.workers.dev';
 function getProxyUrl() { return localStorage.getItem('claude_proxy_url') || DEFAULT_PROXY_URL; }
 // Anova personal access token — hardcode here (like the proxy) so it survives storage wipes.
-const DEFAULT_ANOVA_PAT = 'anova-eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOiJkbWx3TTZGNzV0T2pYYUpCblBQTDhRdGtqSncxIiwiY3JlYXRlZEF0IjoxNzgxODYyNDc1Mjk0fQ.OUI-hlM8nZKUVXv3Cw5eLwXxU_1f97s_cnZ16Eb-GvY';
+const DEFAULT_ANOVA_PAT = '';
 function getAnovaPat() { return (localStorage.getItem('anova_pat') || DEFAULT_ANOVA_PAT || '').trim(); }
+// Sonos OAuth client id (public; the secret lives on the Worker). Hardcode here once you have it.
+const DEFAULT_SONOS_CLIENT_ID = '';
+function getSonosClientId() { return (localStorage.getItem('sonos_client_id') || DEFAULT_SONOS_CLIENT_ID || '').trim(); }
+function sonosRedirectUri() { return location.origin + location.pathname; }
 // Baked-in parenting philosophy fallback (used when none is saved locally).
 const DEFAULT_PHILOSOPHY = `You are a parenting advisor aligned with our family's philosophy. Use the following as your foundation:
 Core principles:
@@ -4686,24 +4724,50 @@ function detectAppliance(r) {
 function saveFridgeSettings() {
   const dt = document.getElementById('dinnerTime').value;
   const ft = document.getElementById('factReadTime').value;
+  const fv = document.getElementById('factVoice') ? document.getElementById('factVoice').value : '';
   if (dt) localStorage.setItem('dinner_time', dt); else localStorage.removeItem('dinner_time');
   if (ft) localStorage.setItem('fact_readaloud_time', ft); else localStorage.removeItem('fact_readaloud_time');
+  if (fv) localStorage.setItem('fact_voice', fv); else localStorage.removeItem('fact_voice');
   toast('Kitchen display updated');
 }
 function loadFridgeSettings() {
   const d = document.getElementById('dinnerTime'); if (d) d.value = getDinnerTime();
   const f = document.getElementById('factReadTime'); if (f) f.value = localStorage.getItem('fact_readaloud_time') || '';
+  populateVoicePicker();
 }
-// Speak the kids' fact aloud (warm, slightly slower voice)
+// Pick the best available speech voice (saved choice, else best-quality en voice)
+function pickVoice() {
+  if (!('speechSynthesis' in window)) return null;
+  const voices = speechSynthesis.getVoices() || [];
+  const saved = localStorage.getItem('fact_voice');
+  if (saved) { const v = voices.find(x => x.name === saved); if (v) return v; }
+  const en = voices.filter(v => /^en[-_]?/i.test(v.lang));
+  // Prefer known natural/enhanced voices; these sound far better than the default
+  const prefer = [/siri/i, /\(enhanced\)/i, /\(premium\)/i, /neural/i, /natural/i, /samantha/i, /ava/i, /allison/i, /nicky/i, /aaron/i, /evan/i, /joelle/i, /google us english/i];
+  for (const re of prefer) { const v = en.find(x => re.test(x.name)); if (v) return v; }
+  // Otherwise avoid the old novelty/robotic voices
+  const good = en.find(v => !/fred|albert|zarvox|bad news|bahh|bells|boing|jester|organ|trinoids|whisper|wobble|cellos|good news/i.test(v.name));
+  return good || en[0] || voices[0] || null;
+}
 function speakFact(text, intro) {
   try {
     if (!('speechSynthesis' in window) || !text) return;
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance((intro ? intro + ' ' : '') + text);
-    u.rate = 0.95; u.pitch = 1.08;
+    const v = pickVoice(); if (v) { u.voice = v; u.lang = v.lang; }
+    u.rate = 0.96; u.pitch = 1.05;
     speechSynthesis.speak(u);
   } catch (e) {}
 }
+function testFactVoice() { speakFact('Did you know? Honey never spoils.', ''); }
+function populateVoicePicker() {
+  const sel = document.getElementById('factVoice'); if (!sel || !('speechSynthesis' in window)) return;
+  const voices = (speechSynthesis.getVoices() || []).filter(v => /^en[-_]?/i.test(v.lang));
+  const saved = localStorage.getItem('fact_voice') || '';
+  sel.innerHTML = '<option value="">Auto (best available)</option>' +
+    voices.map(v => `<option value="${esc(v.name)}" ${v.name === saved ? 'selected' : ''}>${esc(v.name)}${v.localService ? '' : ' (online)'}</option>`).join('');
+}
+if ('speechSynthesis' in window) { try { speechSynthesis.onvoiceschanged = populateVoicePicker; speechSynthesis.getVoices(); } catch (e) {} }
 // Returns {start, dinner} Date objects for today, or null if cook time unknown.
 function recommendedStart(cookMin) {
   if (!cookMin) return null;
@@ -5165,6 +5229,114 @@ function closeFridgeAppliances() {
 }
 
 // ===========================================================================
+// SONOS (beta) — official cloud Control API via the Worker
+// ===========================================================================
+let _sonosHouseholdId = null, _sonosGroups = [], _sonosGroupId = null, _sonosFavorites = [];
+function sonosTokens() { try { return JSON.parse(localStorage.getItem('sonos_tokens') || 'null'); } catch (e) { return null; } }
+function setSonosTokens(t) { try { localStorage.setItem('sonos_tokens', JSON.stringify(t)); } catch (e) {} }
+function setSonosStatus(s) { ['sonosStatus', 'sonosSettingsStatus'].forEach(id => { const e = document.getElementById(id); if (e) e.textContent = s; }); }
+function saveSonosClientId() { const v = document.getElementById('sonosClientId').value.trim(); if (v) localStorage.setItem('sonos_client_id', v); else localStorage.removeItem('sonos_client_id'); toast('Sonos Client ID saved'); }
+function loadSonosSettings() { const el = document.getElementById('sonosClientId'); if (el) el.value = getSonosClientId(); setSonosStatus(sonosTokens() ? 'Connected.' : 'Not connected.'); }
+
+function connectSonos() {
+  const cid = getSonosClientId();
+  if (!cid) { setSonosStatus('Add your Sonos Client ID first.'); toast('Add your Sonos Client ID first'); return; }
+  const state = anovaUuid();
+  try { sessionStorage.setItem('sonos_state', state); } catch (e) {}
+  location.href = 'https://api.sonos.com/login/v3/oauth?client_id=' + encodeURIComponent(cid) +
+    '&response_type=code&state=' + state + '&scope=playback-control-all&redirect_uri=' + encodeURIComponent(sonosRedirectUri());
+}
+
+async function handleSonosRedirect() {
+  const p = new URLSearchParams(location.search);
+  const code = p.get('code'); if (!code) return;
+  let saved = ''; try { saved = sessionStorage.getItem('sonos_state') || ''; } catch (e) {}
+  if (saved && p.get('state') && saved !== p.get('state')) { history.replaceState({}, '', sonosRedirectUri()); return; }
+  try {
+    const res = await fetch(getProxyUrl() + '/sonos/token', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ grant_type: 'authorization_code', code, redirect_uri: sonosRedirectUri() }) });
+    const t = await res.json();
+    if (t.access_token) { t.expires_at = Date.now() + (t.expires_in || 3600) * 1000; setSonosTokens(t); toast('Sonos connected'); }
+    else toast('Sonos connect failed');
+  } catch (e) { toast('Sonos connect error'); }
+  history.replaceState({}, '', sonosRedirectUri());
+}
+
+async function ensureSonosToken() {
+  const t = sonosTokens(); if (!t || !t.access_token) return null;
+  if (t.expires_at && Date.now() < t.expires_at - 60000) return t.access_token;
+  if (!t.refresh_token) return t.access_token;
+  try {
+    const res = await fetch(getProxyUrl() + '/sonos/token', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ grant_type: 'refresh_token', refresh_token: t.refresh_token }) });
+    const nt = await res.json();
+    if (nt.access_token) { nt.refresh_token = nt.refresh_token || t.refresh_token; nt.expires_at = Date.now() + (nt.expires_in || 3600) * 1000; setSonosTokens(nt); return nt.access_token; }
+  } catch (e) {}
+  return t.access_token;
+}
+
+async function sonosApi(method, path, body) {
+  const token = await ensureSonosToken();
+  if (!token) throw new Error('Not connected to Sonos');
+  const res = await fetch(getProxyUrl() + '/sonos/api', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token, method, path, body }) });
+  if (res.status === 401) throw new Error('Sonos session expired — reconnect in Settings.');
+  const txt = await res.text(); let data; try { data = JSON.parse(txt); } catch (e) { data = {}; }
+  return data;
+}
+
+async function loadSonos() {
+  setSonosStatus('Loading your Sonos…');
+  try {
+    const hh = await sonosApi('GET', '/households');
+    const households = hh.households || [];
+    if (!households.length) { setSonosStatus('No Sonos households found on this account.'); return; }
+    _sonosHouseholdId = households[0].id;
+    const g = await sonosApi('GET', '/households/' + _sonosHouseholdId + '/groups');
+    _sonosGroups = g.groups || [];
+    if ((!_sonosGroupId || !_sonosGroups.find(x => x.id === _sonosGroupId)) && _sonosGroups[0]) _sonosGroupId = _sonosGroups[0].id;
+    try { const f = await sonosApi('GET', '/households/' + _sonosHouseholdId + '/favorites'); _sonosFavorites = (f.items || []).slice(0, 30); } catch (e) { _sonosFavorites = []; }
+    setSonosStatus(_sonosGroups.length + ' room group(s) found.');
+    renderSonosControls();
+  } catch (e) { setSonosStatus(e.message || 'Could not load Sonos.'); }
+}
+
+function renderSonosControls() {
+  const el = document.getElementById('sonosBody'); if (!el) return;
+  if (!sonosTokens()) { el.innerHTML = '<p style="font-size:14px;color:var(--text-secondary);">Not connected. Tap "Connect Sonos" in Settings.</p>'; return; }
+  if (!_sonosGroups.length) { el.innerHTML = '<p style="font-size:14px;color:var(--text-secondary);">Loading rooms…</p>'; return; }
+  const opts = _sonosGroups.map(g => `<option value="${g.id}" ${g.id === _sonosGroupId ? 'selected' : ''}>${esc(g.name)}</option>`).join('');
+  let html = `<div class="anova-row"><label>Room</label><select onchange="_sonosGroupId=this.value" style="flex:1;">${opts}</select></div>
+    <div style="display:flex;gap:8px;align-items:center;margin:14px 0;">
+      <button class="btn btn-secondary" onclick="sonosCmd('skipToPreviousTrack')" style="font-size:18px;">⏮</button>
+      <button class="btn btn-primary" style="flex:1;font-size:16px;" onclick="sonosCmd('togglePlayPause')">⏯ Play / Pause</button>
+      <button class="btn btn-secondary" onclick="sonosCmd('skipToNextTrack')" style="font-size:18px;">⏭</button>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:6px;">
+      <button class="btn btn-secondary" style="flex:1;" onclick="sonosVol(-5)">🔉 Vol −</button>
+      <button class="btn btn-secondary" style="flex:1;" onclick="sonosVol(5)">🔊 Vol +</button>
+      <button class="btn btn-secondary" style="flex:1;" onclick="sonosMute()">🔇 Mute</button>
+    </div>`;
+  if (_sonosFavorites.length) {
+    html += '<h4 style="font-size:12px;text-transform:uppercase;color:var(--text-secondary);letter-spacing:.5px;margin:14px 0 8px;">Favorites</h4><div style="display:flex;flex-direction:column;gap:6px;">' +
+      _sonosFavorites.map(f => `<button class="btn btn-secondary btn-sm" style="text-align:left;justify-content:flex-start;" onclick="sonosFavorite('${esc(f.id).replace(/'/g,"\\'")}')">▶ ${esc(f.name)}</button>`).join('') + '</div>';
+  }
+  el.innerHTML = html;
+}
+
+async function sonosCmd(cmd) { if (!_sonosGroupId) return; try { await sonosApi('POST', '/groups/' + _sonosGroupId + '/playback/' + cmd, {}); } catch (e) { toast(e.message); } }
+async function sonosVol(d) { if (!_sonosGroupId) return; try { await sonosApi('POST', '/groups/' + _sonosGroupId + '/groupVolume/relative', { volumeDelta: d }); } catch (e) { toast(e.message); } }
+async function sonosMute() { if (!_sonosGroupId) return; try { await sonosApi('POST', '/groups/' + _sonosGroupId + '/groupVolume/mute', { muted: true }); toast('Muted'); } catch (e) { toast(e.message); } }
+async function sonosFavorite(fid) { if (!_sonosGroupId) return; try { await sonosApi('POST', '/groups/' + _sonosGroupId + '/favorites', { favoriteId: fid, action: 'REPLACE', playOnCompletion: true }); toast('Playing favorite'); } catch (e) { toast(e.message); } }
+
+function openSonosModal() {
+  document.getElementById('sonosModal').classList.add('open');
+  renderSonosControls();
+  if (sonosTokens()) loadSonos(); else setSonosStatus('Connect Sonos in Settings first.');
+}
+function closeSonosModal() { document.getElementById('sonosModal').classList.remove('open'); }
+
+// ===========================================================================
 // INIT
 // ===========================================================================
 loadLocal();
@@ -5188,11 +5360,14 @@ if(familyCode) {
 }
 
 // Show which version this device is actually running (Settings → Sync card)
-const APP_VERSION = 'v38'; // keep in step with sw.js CACHE_NAME
+const APP_VERSION = 'v40'; // keep in step with sw.js CACHE_NAME
 (function(){ const el = document.getElementById('appVersion'); if (el) el.textContent = 'App version: ' + APP_VERSION; })();
 
 // Auto-connect to Anova on load if a token is set, so devices are ready everywhere
 if (getAnovaPat()) { try { anovaConnect(); } catch (e) {} }
+
+// Complete a Sonos OAuth redirect if we came back with ?code
+try { handleSonosRedirect(); } catch (e) {}
 
 // Resume kitchen display mode after a reload (e.g. dedicated iPad)
 if (localStorage.getItem('mp_fridge_mode') === '1' && familyCode) {
