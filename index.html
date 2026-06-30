@@ -591,11 +591,20 @@ nav button.active svg { animation: tabSpring .4s cubic-bezier(.34,1.56,.64,1); }
       </div>
       <div class="form-group">
         <label>Reading voice</label>
-        <div style="display:flex;gap:6px;">
-          <select id="factVoice" onchange="saveFridgeSettings()" style="flex:1;"><option value="">Auto (best available)</option></select>
+        <label style="display:flex;align-items:center;gap:8px;font-size:14px;margin-bottom:8px;"><input type="checkbox" id="ttsCloud" onchange="saveFridgeSettings()" style="width:auto;"> Use natural cloud voice (Google) — best quality, any device</label>
+        <select id="ttsVoice" onchange="saveFridgeSettings()" style="width:100%;margin-bottom:8px;">
+          <option value="en-US-Neural2-F">Female · warm (Neural2-F)</option>
+          <option value="en-US-Neural2-C">Female · bright (Neural2-C)</option>
+          <option value="en-US-Neural2-H">Female · soft (Neural2-H)</option>
+          <option value="en-US-Neural2-D">Male · warm (Neural2-D)</option>
+          <option value="en-US-Neural2-J">Male · deep (Neural2-J)</option>
+          <option value="en-US-Neural2-A">Male · bright (Neural2-A)</option>
+        </select>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <select id="factVoice" onchange="saveFridgeSettings()" style="flex:1;"><option value="">Device voice fallback (auto)</option></select>
           <button class="btn btn-secondary btn-sm" onclick="testFactVoice()">Test</button>
         </div>
-        <p style="font-size:12px;color:var(--text-secondary);margin-top:4px;">For the best sound on iPad: Settings → Accessibility → Spoken Content → Voices → English → download an <strong>Enhanced</strong> or <strong>Premium</strong> voice (e.g., Evan, Ava, Nicky), then pick it here.</p>
+        <p style="font-size:12px;color:var(--text-secondary);margin-top:4px;">Turn on the cloud voice for natural speech on any device (needs the Google TTS key on your Worker). The device-voice dropdown is the offline fallback.</p>
       </div>
       <button class="btn btn-secondary" style="width:100%;" onclick="openFridgeMode()">🖥️ Open Kitchen Display</button>
     </div>
@@ -2815,10 +2824,10 @@ function saveNutritionKey() {
 const DEFAULT_PROXY_URL = 'https://claude-proxy.alex-r-gould.workers.dev';
 function getProxyUrl() { return localStorage.getItem('claude_proxy_url') || DEFAULT_PROXY_URL; }
 // Anova personal access token — hardcode here (like the proxy) so it survives storage wipes.
-const DEFAULT_ANOVA_PAT = 'anova-eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOiJkbWx3TTZGNzV0T2pYYUpCblBQTDhRdGtqSncxIiwiY3JlYXRlZEF0IjoxNzgxODYyNDc1Mjk0fQ.OUI-hlM8nZKUVXv3Cw5eLwXxU_1f97s_cnZ16Eb-GvY';
+const DEFAULT_ANOVA_PAT = '';
 function getAnovaPat() { return (localStorage.getItem('anova_pat') || DEFAULT_ANOVA_PAT || '').trim(); }
 // Sonos OAuth client id (public; the secret lives on the Worker). Hardcode here once you have it.
-const DEFAULT_SONOS_CLIENT_ID = '1acc19d7-1e49-482d-a3e0-06da4e240dcf';
+const DEFAULT_SONOS_CLIENT_ID = '';
 function getSonosClientId() { return (localStorage.getItem('sonos_client_id') || DEFAULT_SONOS_CLIENT_ID || '').trim(); }
 function sonosRedirectUri() { return location.origin + location.pathname; }
 // Baked-in parenting philosophy fallback (used when none is saved locally).
@@ -4725,14 +4734,20 @@ function saveFridgeSettings() {
   const dt = document.getElementById('dinnerTime').value;
   const ft = document.getElementById('factReadTime').value;
   const fv = document.getElementById('factVoice') ? document.getElementById('factVoice').value : '';
+  const cloudEl = document.getElementById('ttsCloud');
+  const ttsVoiceEl = document.getElementById('ttsVoice');
   if (dt) localStorage.setItem('dinner_time', dt); else localStorage.removeItem('dinner_time');
   if (ft) localStorage.setItem('fact_readaloud_time', ft); else localStorage.removeItem('fact_readaloud_time');
   if (fv) localStorage.setItem('fact_voice', fv); else localStorage.removeItem('fact_voice');
+  if (cloudEl) { if (cloudEl.checked) localStorage.setItem('tts_cloud', '1'); else localStorage.removeItem('tts_cloud'); }
+  if (ttsVoiceEl && ttsVoiceEl.value) localStorage.setItem('tts_voice', ttsVoiceEl.value);
   toast('Kitchen display updated');
 }
 function loadFridgeSettings() {
   const d = document.getElementById('dinnerTime'); if (d) d.value = getDinnerTime();
   const f = document.getElementById('factReadTime'); if (f) f.value = localStorage.getItem('fact_readaloud_time') || '';
+  const cloudEl = document.getElementById('ttsCloud'); if (cloudEl) cloudEl.checked = ttsCloudEnabled();
+  const ttsVoiceEl = document.getElementById('ttsVoice'); if (ttsVoiceEl) ttsVoiceEl.value = getTtsVoice();
   populateVoicePicker();
 }
 // Pick the best available speech voice (saved choice, else best-quality en voice)
@@ -4749,7 +4764,10 @@ function pickVoice() {
   const good = en.find(v => !/fred|albert|zarvox|bad news|bahh|bells|boing|jester|organ|trinoids|whisper|wobble|cellos|good news/i.test(v.name));
   return good || en[0] || voices[0] || null;
 }
-function speakFact(text, intro) {
+function getTtsVoice() { return localStorage.getItem('tts_voice') || 'en-US-Neural2-F'; }
+function ttsCloudEnabled() { return localStorage.getItem('tts_cloud') === '1'; }
+// OS (Web Speech) fallback voice
+function speakOS(text, intro) {
   try {
     if (!('speechSynthesis' in window) || !text) return;
     speechSynthesis.cancel();
@@ -4759,6 +4777,24 @@ function speakFact(text, intro) {
     speechSynthesis.speak(u);
   } catch (e) {}
 }
+// Natural cloud voice via Google TTS (through the Worker); falls back to OS voice
+let _ttsAudio = null;
+async function speakCloud(text, intro) {
+  const full = (intro ? intro + ' ' : '') + text; if (!full) return;
+  try {
+    const res = await fetch(getProxyUrl() + '/tts', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: full, voice: getTtsVoice() }) });
+    const j = await res.json();
+    if (j.audioContent) {
+      try { if (_ttsAudio) _ttsAudio.pause(); } catch (e) {}
+      _ttsAudio = new Audio('data:audio/mp3;base64,' + j.audioContent);
+      _ttsAudio.play().catch(() => speakOS(text, intro));
+      return;
+    }
+  } catch (e) {}
+  speakOS(text, intro);
+}
+function speakFact(text, intro) { if (ttsCloudEnabled()) speakCloud(text, intro); else speakOS(text, intro); }
 function testFactVoice() { speakFact('Did you know? Honey never spoils.', ''); }
 function populateVoicePicker() {
   const sel = document.getElementById('factVoice'); if (!sel || !('speechSynthesis' in window)) return;
@@ -5360,7 +5396,7 @@ if(familyCode) {
 }
 
 // Show which version this device is actually running (Settings → Sync card)
-const APP_VERSION = 'v40'; // keep in step with sw.js CACHE_NAME
+const APP_VERSION = 'v41'; // keep in step with sw.js CACHE_NAME
 (function(){ const el = document.getElementById('appVersion'); if (el) el.textContent = 'App version: ' + APP_VERSION; })();
 
 // Auto-connect to Anova on load if a token is set, so devices are ready everywhere
