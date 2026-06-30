@@ -2049,16 +2049,72 @@ async function fetchWeather() {
       lat = pos.coords.latitude.toFixed(4);
       lon = pos.coords.longitude.toFixed(4);
     }
-
-    const resp = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&daily=weathercode,temperature_2m_max,temperature_2m_min,precipitation_probability_max&temperature_unit=fahrenheit&timezone=auto&forecast_days=7`, {signal: AbortSignal.timeout(8000)});
-    if (!resp.ok) throw new Error('Weather API error');
-    const result = await resp.json();
-    weatherCache = { ...result, fetchedAt: Date.now(), locLabel: label };
+    // US National Weather Service first (matches phone weather closely); fall back to Open-Meteo (global)
+    let result = null;
+    try { result = await fetchNWS(lat, lon, label); } catch (e) { result = null; }
+    if (!result) result = await fetchOpenMeteo(lat, lon, label);
+    weatherCache = result;
     renderWeather(weatherCache);
   } catch(e) {
     const el2 = document.getElementById('homeWeather');
     if (el2) el2.innerHTML = '<div class="card"><p style="font-size:13px;color:var(--text-secondary);">Weather unavailable — enable location access to see your forecast.</p></div>';
   }
+}
+
+// Open-Meteo (global fallback) — returns the normalized weatherCache shape
+async function fetchOpenMeteo(lat, lon, label) {
+  const resp = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code,apparent_temperature&daily=weathercode,temperature_2m_max,temperature_2m_min,precipitation_probability_max&temperature_unit=fahrenheit&timezone=auto&forecast_days=7`, {signal: AbortSignal.timeout(8000)});
+  if (!resp.ok) throw new Error('Weather API error');
+  const result = await resp.json();
+  return { ...result, fetchedAt: Date.now(), locLabel: label, source: 'open-meteo' };
+}
+
+// Map an NWS text forecast to our WMO code so existing icons/labels work
+function nwsCode(s) {
+  s = (s || '').toLowerCase();
+  if (/thunder/.test(s)) return 95;
+  if (/snow|flurr|sleet|wintry|ice/.test(s)) return 71;
+  if (/rain|shower|drizzle/.test(s)) return /heavy/.test(s) ? 65 : 61;
+  if (/fog|haze/.test(s)) return 45;
+  if (/partly sunny|partly cloudy/.test(s)) return 2;
+  if (/mostly cloudy|cloudy|overcast/.test(s)) return 3;
+  if (/mostly sunny|mostly clear/.test(s)) return 1;
+  if (/sunny|clear/.test(s)) return 0;
+  return 2;
+}
+
+// US National Weather Service — normalized into the weatherCache shape
+async function fetchNWS(lat, lon, label) {
+  const headers = { 'Accept': 'application/geo+json' };
+  const p = await fetch(`https://api.weather.gov/points/${lat},${lon}`, { headers, signal: AbortSignal.timeout(8000) });
+  if (!p.ok) throw new Error('nws points ' + p.status);
+  const props = (await p.json()).properties;
+  if (!props || !props.forecast) throw new Error('nws no forecast');
+  if (!label) { const rl = props.relativeLocation && props.relativeLocation.properties; if (rl) label = [rl.city, rl.state].filter(Boolean).join(', '); }
+  const f = await fetch(props.forecast, { headers, signal: AbortSignal.timeout(8000) });
+  if (!f.ok) throw new Error('nws forecast ' + f.status);
+  const periods = (await f.json()).properties.periods || [];
+  if (!periods.length) throw new Error('nws empty');
+  const byDate = {}, order = [];
+  for (const per of periods) {
+    const dk = (per.startTime || '').slice(0, 10); if (!dk) continue;
+    if (!byDate[dk]) { byDate[dk] = {}; order.push(dk); }
+    const e = byDate[dk];
+    if (per.isDaytime) { e.max = per.temperature; e.code = nwsCode(per.shortForecast); e.pop = (per.probabilityOfPrecipitation && per.probabilityOfPrecipitation.value) || 0; }
+    else { e.min = per.temperature; if (e.code == null) e.code = nwsCode(per.shortForecast); }
+  }
+  const time = [], tmax = [], tmin = [], code = [], pop = [];
+  for (const dk of order.slice(0, 7)) {
+    const e = byDate[dk]; time.push(dk);
+    tmax.push(e.max != null ? e.max : e.min); tmin.push(e.min != null ? e.min : e.max);
+    code.push(e.code != null ? e.code : 2); pop.push(e.pop || 0);
+  }
+  let current;
+  try {
+    const h = await fetch(props.forecastHourly, { headers, signal: AbortSignal.timeout(8000) });
+    if (h.ok) { const hp = (await h.json()).properties.periods || []; if (hp[0]) current = { temperature_2m: hp[0].temperature, weather_code: nwsCode(hp[0].shortForecast) }; }
+  } catch (e) {}
+  return { daily: { time, temperature_2m_max: tmax, temperature_2m_min: tmin, weathercode: code, precipitation_probability_max: pop }, current, locLabel: label || '', fetchedAt: Date.now(), source: 'nws' };
 }
 
 function renderWeather(w) {
@@ -2068,6 +2124,9 @@ function renderWeather(w) {
   const today = new Date();
   let html = '<div class="card">';
   html += `<h3 style="margin-bottom:10px;">🌤️ This Week's Weather${w.locLabel ? ' <span style="text-transform:none;font-weight:400;color:var(--text-secondary);">· ' + esc(w.locLabel) + '</span>' : ''}</h3>`;
+  if (w.current && typeof w.current.temperature_2m === 'number') {
+    html += `<div style="font-size:15px;margin-bottom:8px;"><strong>Now ${Math.round(w.current.temperature_2m)}°</strong> <span style="color:var(--text-secondary);">${esc(WMO_LABELS[w.current.weather_code] || '')}${typeof w.current.apparent_temperature === 'number' ? ' · feels ' + Math.round(w.current.apparent_temperature) + '°' : ''}</span></div>`;
+  }
   html += '<div style="display:flex;gap:4px;overflow-x:auto;padding-bottom:4px;">';
   for (let i = 0; i < d.time.length && i < 7; i++) {
     const dt = new Date(d.time[i] + 'T12:00:00');
@@ -2095,10 +2154,14 @@ function todayWeatherNote() {
   const i = weatherCache.daily.time.indexOf(dateKey(new Date()));
   if (i === -1) return '';
   const wd = weatherCache.daily;
+  const cur = weatherCache.current;
   const hi = Math.round(wd.temperature_2m_max[i]);
+  const lo = Math.round(wd.temperature_2m_min[i]);
   const rain = wd.precipitation_probability_max ? wd.precipitation_probability_max[i] : 0;
-  const label = WMO_LABELS[wd.weathercode[i]] || '';
-  return `${label} ${hi}°F${rain > 40 ? ' · ' + rain + '% rain' : ''}`.trim();
+  const code = (cur && typeof cur.weather_code === 'number') ? cur.weather_code : wd.weathercode[i];
+  const label = WMO_LABELS[code] || '';
+  const nowPart = (cur && typeof cur.temperature_2m === 'number') ? Math.round(cur.temperature_2m) + '°F now · ' : '';
+  return `${label} · ${nowPart}H ${hi}° L ${lo}°${rain > 40 ? ' · ' + rain + '% rain' : ''}`.trim();
 }
 
 // Instant smart pick for tonight: skips recently-made recipes and this week's
@@ -2895,7 +2958,7 @@ function saveNutritionKey() {
 const DEFAULT_PROXY_URL = 'https://claude-proxy.alex-r-gould.workers.dev';
 function getProxyUrl() { return localStorage.getItem('claude_proxy_url') || DEFAULT_PROXY_URL; }
 // Anova personal access token — hardcode here (like the proxy) so it survives storage wipes.
-const DEFAULT_ANOVA_PAT = 'anova-eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOiJkbWx3TTZGNzV0T2pYYUpCblBQTDhRdGtqSncxIiwiY3JlYXRlZEF0IjoxNzgxODYyNDc1Mjk0fQ.OUI-hlM8nZKUVXv3Cw5eLwXxU_1f97s_cnZ16Eb-GvY';
+const DEFAULT_ANOVA_PAT = '';
 function getAnovaPat() { return (localStorage.getItem('anova_pat') || DEFAULT_ANOVA_PAT || '').trim(); }
 // Sonos OAuth client id (public; the secret lives on the Worker). Hardcode here once you have it.
 const DEFAULT_SONOS_CLIENT_ID = '1acc19d7-1e49-482d-a3e0-06da4e240dcf';
@@ -4939,11 +5002,13 @@ function renderFridgeMode() {
   if (weatherCache && weatherCache.daily) {
     const wd = weatherCache.daily;
     const start = Math.max(0, wd.time.indexOf(todayKey));
-    const code = wd.weathercode[start];
+    const cur = weatherCache.current;
+    const code = (cur && typeof cur.weather_code === 'number') ? cur.weather_code : wd.weathercode[start];
+    const nowTemp = (cur && typeof cur.temperature_2m === 'number') ? Math.round(cur.temperature_2m) : Math.round(wd.temperature_2m_max[start]);
     const rain = wd.precipitation_probability_max ? wd.precipitation_probability_max[start] : 0;
     heroHtml = `${fridgeWeatherIcon(code, 96)}
       <div>
-        <div class="fm-wh-temp">${Math.round(wd.temperature_2m_max[start])}°</div>
+        <div class="fm-wh-temp">${nowTemp}°<span style="font-size:18px;color:var(--text-secondary);"> now</span></div>
         <div class="fm-wh-cond">${esc(WMO_LABELS[code] || '')}${rain > 30 ? ' · ' + rain + '% rain' : ''}</div>
         <div class="fm-wh-hl">High ${Math.round(wd.temperature_2m_max[start])}° · Low ${Math.round(wd.temperature_2m_min[start])}°</div>
       </div>`;
@@ -5526,7 +5591,7 @@ if(familyCode) {
 }
 
 // Show which version this device is actually running (Settings → Sync card)
-const APP_VERSION = 'v45'; // keep in step with sw.js CACHE_NAME
+const APP_VERSION = 'v47'; // keep in step with sw.js CACHE_NAME
 (function(){ const el = document.getElementById('appVersion'); if (el) el.textContent = 'App version: ' + APP_VERSION; })();
 
 // Auto-connect to Anova on load if a token is set, so devices are ready everywhere
