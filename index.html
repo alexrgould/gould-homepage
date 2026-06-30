@@ -2818,7 +2818,7 @@ function getProxyUrl() { return localStorage.getItem('claude_proxy_url') || DEFA
 const DEFAULT_ANOVA_PAT = '';
 function getAnovaPat() { return (localStorage.getItem('anova_pat') || DEFAULT_ANOVA_PAT || '').trim(); }
 // Sonos OAuth client id (public; the secret lives on the Worker). Hardcode here once you have it.
-const DEFAULT_SONOS_CLIENT_ID = '';
+const DEFAULT_SONOS_CLIENT_ID = '1acc19d7-1e49-482d-a3e0-06da4e240dcf';
 function getSonosClientId() { return (localStorage.getItem('sonos_client_id') || DEFAULT_SONOS_CLIENT_ID || '').trim(); }
 function sonosRedirectUri() { return location.origin + location.pathname; }
 // Baked-in parenting philosophy fallback (used when none is saved locally).
