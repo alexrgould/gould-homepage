@@ -581,6 +581,16 @@ nav button.active svg { animation: tabSpring .4s cubic-bezier(.34,1.56,.64,1); }
     </div>
 
     <div class="card" style="margin-bottom:16px;">
+      <h3 style="margin-bottom:8px;">Weather Location</h3>
+      <p style="font-size:13px; color:var(--text-secondary); margin-bottom:10px;">Leave blank to use your device's location. Or type a city to lock it in (handy on the kitchen iPad, where GPS is often wrong).</p>
+      <div style="display:flex; gap:6px;">
+        <input type="text" id="weatherLoc" placeholder="e.g., Campbell, CA" style="flex:1; padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-size:13px;" onkeydown="if(event.key==='Enter')setWeatherLocation()">
+        <button class="btn btn-secondary btn-sm" onclick="setWeatherLocation()">Set</button>
+      </div>
+      <div id="weatherLocStatus" style="font-size:12px;color:var(--text-secondary);margin-top:6px;"></div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
       <h3 style="margin-bottom:8px;">Kitchen Display</h3>
       <p style="font-size:13px; color:var(--text-secondary); margin-bottom:10px;">Full-screen family dashboard: clock, today's events, tonight's dinner, weather, and grocery quick-add. Great for an old iPad on the counter — it stays on this view even after a reload.</p>
       <div class="form-group">
@@ -1264,7 +1274,7 @@ function showView(name) {
   if (name === 'plan') renderMealPlan();
   if (name === 'grocery') renderGrocery();
   if (name === 'staples') renderStaples();
-  if (name === 'sync') { renderDoorDashSettings(); updateCalendarSettingsUI(); renderCuisines(); renderSync(); renderKids(); renderBlogsList(); const nk=document.getElementById('nutritionApiKey'); if(nk) nk.value=localStorage.getItem('nutrition_api_key')||''; loadClaudeSettings(); loadParentingPhilosophy(); loadFridgeSettings(); loadAnovaPat(); loadSonosSettings(); }
+  if (name === 'sync') { renderDoorDashSettings(); updateCalendarSettingsUI(); renderCuisines(); renderSync(); renderKids(); renderBlogsList(); const nk=document.getElementById('nutritionApiKey'); if(nk) nk.value=localStorage.getItem('nutrition_api_key')||''; loadClaudeSettings(); loadParentingPhilosophy(); loadFridgeSettings(); loadAnovaPat(); loadSonosSettings(); loadWeatherSettings(); }
 }
 
 // ===========================================================================
@@ -1982,6 +1992,41 @@ const WMO_LABELS = {
 };
 const SHORT_DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
+function getWeatherLoc() { try { return JSON.parse(localStorage.getItem('weather_loc') || 'null'); } catch (e) { return null; } }
+const US_STATES = { al:'alabama',ak:'alaska',az:'arizona',ar:'arkansas',ca:'california',co:'colorado',ct:'connecticut',de:'delaware',fl:'florida',ga:'georgia',hi:'hawaii',id:'idaho',il:'illinois',in:'indiana',ia:'iowa',ks:'kansas',ky:'kentucky',la:'louisiana',me:'maine',md:'maryland',ma:'massachusetts',mi:'michigan',mn:'minnesota',ms:'mississippi',mo:'missouri',mt:'montana',ne:'nebraska',nv:'nevada',nh:'new hampshire',nj:'new jersey',nm:'new mexico',ny:'new york',nc:'north carolina',nd:'north dakota',oh:'ohio',ok:'oklahoma',or:'oregon',pa:'pennsylvania',ri:'rhode island',sc:'south carolina',sd:'south dakota',tn:'tennessee',tx:'texas',ut:'utah',vt:'vermont',va:'virginia',wa:'washington',wv:'west virginia',wi:'wisconsin',wy:'wyoming' };
+// Geocode a typed location (Open-Meteo geocoding, free, no key) and save it.
+// The geocoder matches a bare city or ZIP, so we split "City, State" and filter by state.
+async function setWeatherLocation() {
+  const q = document.getElementById('weatherLoc').value.trim();
+  const status = document.getElementById('weatherLocStatus');
+  if (!q) { localStorage.removeItem('weather_loc'); weatherCache = null; if (status) status.textContent = 'Using current location (GPS).'; fetchWeather(); return; }
+  if (status) status.textContent = 'Looking up…';
+  try {
+    const parts = q.split(',').map(s => s.trim()).filter(Boolean);
+    const city = parts[0];
+    let region = (parts[1] || '').toLowerCase();
+    if (US_STATES[region]) region = US_STATES[region];
+    const r = await fetch('https://geocoding-api.open-meteo.com/v1/search?count=10&language=en&name=' + encodeURIComponent(city));
+    const j = await r.json();
+    const results = j.results || [];
+    let m = null;
+    if (region) m = results.find(x => (x.admin1 || '').toLowerCase() === region) || results.find(x => (x.admin1 || '').toLowerCase().includes(region));
+    m = m || results[0];
+    if (!m) { if (status) status.textContent = 'Not found — try just the city name or a ZIP code.'; return; }
+    const label = [m.name, m.admin1, m.country_code].filter(Boolean).join(', ');
+    localStorage.setItem('weather_loc', JSON.stringify({ lat: m.latitude.toFixed(4), lon: m.longitude.toFixed(4), label }));
+    weatherCache = null;
+    if (status) status.textContent = '✓ Set to ' + label;
+    fetchWeather();
+  } catch (e) { if (status) status.textContent = 'Lookup failed — check your connection.'; }
+}
+function loadWeatherSettings() {
+  const el = document.getElementById('weatherLoc'); const saved = getWeatherLoc();
+  if (el) el.value = saved && saved.label ? saved.label : '';
+  const status = document.getElementById('weatherLocStatus');
+  if (status) status.textContent = saved && saved.label ? ('Weather for ' + saved.label) : 'Using current location (GPS).';
+}
+
 async function fetchWeather() {
   // Use cached data if less than 30 minutes old
   if (weatherCache && (Date.now() - weatherCache.fetchedAt < 30*60*1000)) {
@@ -1992,18 +2037,23 @@ async function fetchWeather() {
   el.innerHTML = '<div class="card"><p style="font-size:13px;color:var(--text-secondary);">Loading weather...</p></div>';
 
   try {
-    // Get user's location
-    const pos = await new Promise((resolve, reject) => {
-      if (!navigator.geolocation) { reject(new Error('No geolocation')); return; }
-      navigator.geolocation.getCurrentPosition(resolve, reject, {timeout:10000, maximumAge:600000});
-    });
-    const lat = pos.coords.latitude.toFixed(4);
-    const lon = pos.coords.longitude.toFixed(4);
+    let lat, lon, label = '';
+    const saved = getWeatherLoc();
+    if (saved && saved.lat) {
+      lat = saved.lat; lon = saved.lon; label = saved.label || '';
+    } else {
+      const pos = await new Promise((resolve, reject) => {
+        if (!navigator.geolocation) { reject(new Error('No geolocation')); return; }
+        navigator.geolocation.getCurrentPosition(resolve, reject, {timeout:10000, maximumAge:600000});
+      });
+      lat = pos.coords.latitude.toFixed(4);
+      lon = pos.coords.longitude.toFixed(4);
+    }
 
     const resp = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&daily=weathercode,temperature_2m_max,temperature_2m_min,precipitation_probability_max&temperature_unit=fahrenheit&timezone=auto&forecast_days=7`, {signal: AbortSignal.timeout(8000)});
     if (!resp.ok) throw new Error('Weather API error');
     const result = await resp.json();
-    weatherCache = { ...result, fetchedAt: Date.now() };
+    weatherCache = { ...result, fetchedAt: Date.now(), locLabel: label };
     renderWeather(weatherCache);
   } catch(e) {
     const el2 = document.getElementById('homeWeather');
@@ -2017,7 +2067,7 @@ function renderWeather(w) {
   const d = w.daily;
   const today = new Date();
   let html = '<div class="card">';
-  html += '<h3 style="margin-bottom:10px;">🌤️ This Week\'s Weather</h3>';
+  html += `<h3 style="margin-bottom:10px;">🌤️ This Week's Weather${w.locLabel ? ' <span style="text-transform:none;font-weight:400;color:var(--text-secondary);">· ' + esc(w.locLabel) + '</span>' : ''}</h3>`;
   html += '<div style="display:flex;gap:4px;overflow-x:auto;padding-bottom:4px;">';
   for (let i = 0; i < d.time.length && i < 7; i++) {
     const dt = new Date(d.time[i] + 'T12:00:00');
@@ -2845,7 +2895,7 @@ function saveNutritionKey() {
 const DEFAULT_PROXY_URL = 'https://claude-proxy.alex-r-gould.workers.dev';
 function getProxyUrl() { return localStorage.getItem('claude_proxy_url') || DEFAULT_PROXY_URL; }
 // Anova personal access token — hardcode here (like the proxy) so it survives storage wipes.
-const DEFAULT_ANOVA_PAT = 'anova-eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOiJkbWx3TTZGNzV0T2pYYUpCblBQTDhRdGtqSncxIiwiY3JlYXRlZEF0IjoxNzgxODYyNDc1Mjk0fQ.OUI-hlM8nZKUVXv3Cw5eLwXxU_1f97s_cnZ16Eb-GvY';
+const DEFAULT_ANOVA_PAT = '';
 function getAnovaPat() { return (localStorage.getItem('anova_pat') || DEFAULT_ANOVA_PAT || '').trim(); }
 // Sonos OAuth client id (public; the secret lives on the Worker). Hardcode here once you have it.
 const DEFAULT_SONOS_CLIENT_ID = '1acc19d7-1e49-482d-a3e0-06da4e240dcf';
@@ -5476,7 +5526,7 @@ if(familyCode) {
 }
 
 // Show which version this device is actually running (Settings → Sync card)
-const APP_VERSION = 'v43'; // keep in step with sw.js CACHE_NAME
+const APP_VERSION = 'v45'; // keep in step with sw.js CACHE_NAME
 (function(){ const el = document.getElementById('appVersion'); if (el) el.textContent = 'App version: ' + APP_VERSION; })();
 
 // Auto-connect to Anova on load if a token is set, so devices are ready everywhere
