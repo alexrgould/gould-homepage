@@ -3383,7 +3383,11 @@ async function callClaude(userPrompt, opts = {}) {
     throw new Error('Claude API error: ' + resp.status + ' ' + errText.substring(0, 100));
   }
   const result = await resp.json();
-  if (result.content && result.content[0]) return result.content[0].text;
+  // Newer models (Sonnet 5+) may lead with a "thinking" block — take the first TEXT block
+  if (result.content) {
+    const textBlock = result.content.find(c => c.type === 'text' && typeof c.text === 'string');
+    if (textBlock) return textBlock.text;
+  }
   throw new Error('Unexpected response from Claude');
 }
 
