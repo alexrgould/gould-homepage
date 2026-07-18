@@ -26,9 +26,21 @@ Built to run on **GitHub Pages** with no build step. Open `index.html` in a brow
 
 ### Cook Mode
 - **Step-by-step cooking view** — full-screen steps in large type, swipe or tap through, with auto-detected tap-to-start timers ("5-6 minutes" becomes a timer)
+- **Real alarms** — timers ring a repeating chime with a full-width banner until dismissed (60s max), vibrate on phones, and survive iOS tab throttling because they're based on wall-clock end times, not tick counting
 - **Ingredients while you cook** — on wide screens (kitchen iPad landscape) the full ingredient list stays pinned beside the steps with the current step's items highlighted; on phones a 🧾 Ingredients button flips to a full-screen checklist and back to your step
+- **Serving scaling** — ½×/1×/2×/3× buttons scale every ingredient quantity (fraction-aware: "1 ½ cups" ×2 → "3 cups")
+- **Voice control** — 🎤 button; say "next", "back", "ingredients", "read it", or "timer 5 minutes"; steps are read aloud as you advance
 - **Mise en place checklist** — tap ingredients to check them off as you gather them (per cooking session, not synced)
 - **Multi-timers, music scene, wake lock** — concurrent named timers, one-tap Sonos cooking playlist, and the screen stays awake while cooking
+
+### Fridge Check (Claude AI)
+- **📸 button on the Recipes tab** — photo your fridge, Claude identifies what's usable and suggests 3-5 dinners, preferring recipes already in your book
+- **Actionable results** — book matches open directly; missing items add to the grocery list in one tap
+
+### Data Protection
+- **Automatic daily backups** — a full snapshot is saved to Firestore once a day (newest 14 kept), with one-tap restore in Settings → Backups
+- **Locked-down Firestore rules** — `firestore.rules` requires Firebase Anonymous Auth (enable it in the console, then publish the rules); new family codes are 10 characters
+- **Grocery quantity merging** — duplicate ingredients across planned recipes sum into one line ("1 lb" + "1 lb" → "2 lb") when units match
 
 ### AI Recipe Steps (Claude AI)
 - **Write missing steps in one tap** — the Recipes tab shows a banner when recipes have no steps; "✨ Write all" has Claude write Cook Mode steps for every one of them from its ingredient list, a few at a time, with progress
@@ -208,7 +220,13 @@ Browser can't call the Anthropic API directly (CORS). A tiny Cloudflare Worker (
 1. Get a free API key from [fdc.nal.usda.gov](https://fdc.nal.usda.gov/api-guide)
 2. Enter it in **Settings → Nutrition API Key**
 
-### 6. Anova Smart Appliances (optional)
+### 6. Firestore security + backups (recommended)
+
+1. Firebase console → Build → **Authentication** → Get started → Sign-in method → enable **Anonymous**
+2. Firestore Database → **Rules** → paste the contents of `firestore.rules` → Publish
+3. That's it — the app signs in anonymously on load. Daily backups start automatically; restore from **Settings → Backups**
+
+### 7. Anova Smart Appliances (optional)
 
 1. Get a Personal Access Token from the Anova Oven app → More → Developer → Personal Access Tokens (starts with `anova-`)
 2. Deploy `anova-proxy-worker.js` to Cloudflare Workers (same flow as the Claude proxy)
