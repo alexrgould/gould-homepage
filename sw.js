@@ -1,4 +1,4 @@
-const CACHE_NAME = 'meal-planner-v52';
+const CACHE_NAME = 'meal-planner-v53';
 const ASSETS = [
   './index.html',
   './manifest.json'
