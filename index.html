@@ -17,6 +17,7 @@
 <!-- Firebase SDK (from CDN — no install needed) -->
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <!-- Google Identity Services + Calendar API -->
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="https://apis.google.com/js/api.js" async defer></script>
@@ -267,14 +268,23 @@ h3 { font-size: 13px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
 #cookMode .cook-progress span.done { background: var(--accent); }
 #cookMode .cook-step { flex: 1; overflow-y: auto; display: flex; flex-direction: column; justify-content: center; font-family: var(--serif); font-size: 27px; line-height: 1.45; padding: 12px 2px; touch-action: pan-y; }
 #cookMode .cook-step-ingr { margin-top: 18px; font-size: 15px; color: var(--text-secondary); line-height: 1.6; }
-#cookMode .cook-timer { display: inline-block; margin-top: 16px; padding: 8px 16px; border-radius: 20px; background: var(--surface); border: 1px solid var(--border); font-size: 17px; font-weight: 600; cursor: pointer; align-self: flex-start; }
-#cookMode .cook-timer.running { background: var(--accent); color: #fff; border-color: var(--accent); }
+#cookMode .cook-timer { display: inline-block; margin-top: 18px; padding: 14px 24px; border-radius: 999px; background: var(--accent-light); border: 2px solid var(--accent); color: var(--accent); font-size: 19px; font-weight: 700; cursor: pointer; align-self: flex-start; font-variant-numeric: tabular-nums; }
+#cookMode .cook-timer.running { background: var(--accent); color: #fff; border-color: var(--accent); font-size: 24px; animation: timerGlow 2s ease-in-out infinite; }
+@keyframes timerGlow { 0%,100% { box-shadow: 0 0 0 0 rgba(196,93,44,0.35); } 50% { box-shadow: 0 0 0 10px rgba(196,93,44,0); } }
+
+/* Timer-done alarm banner — unmissable, sits above everything incl. cook mode */
+#alarmBanner { display: none; position: fixed; top: 0; left: 0; right: 0; z-index: 4000; background: var(--red); color: #fff; padding: max(env(safe-area-inset-top), 14px) 20px 16px; text-align: center; cursor: pointer; animation: alarmPulse 1s ease-in-out infinite; box-shadow: 0 4px 24px rgba(196,64,64,0.5); }
+#alarmBanner.on { display: block; }
+#alarmBanner .ab-text { font-size: 20px; font-weight: 700; }
+#alarmBanner .ab-sub { font-size: 13px; opacity: 0.9; margin-top: 2px; }
+@keyframes alarmPulse { 0%,100% { filter: brightness(1); } 50% { filter: brightness(1.25); } }
 #cookMode .cook-timers-bar { flex-shrink: 0; padding: 8px 0; }
 #cookMode .cook-timers { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
 #cookMode .cook-chip { background: var(--accent-light); color: var(--accent); border: 1px solid var(--accent); border-radius: 999px; padding: 8px 14px; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
 #cookMode .cook-chip.done { background: var(--accent); color: #fff; animation: chipPulse 1s ease-in-out infinite; }
 @keyframes chipPulse { 0%,100% { opacity: 1; } 50% { opacity: .55; } }
 #cookMode .cook-add-btn { background: var(--surface); border: 1px solid var(--border); border-radius: 999px; padding: 8px 16px; font-size: 15px; font-weight: 600; color: var(--text); }
+#cookMode #cookVoiceBtn.listening { background: var(--red); color: #fff; border-color: var(--red); animation: chipPulse 1.5s ease-in-out infinite; }
 #cookMode .timer-presets { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
 #cookMode .timer-presets button { background: var(--surface); border: 1px solid var(--border); border-radius: 999px; padding: 8px 14px; font-size: 14px; font-weight: 600; color: var(--text); }
 #cookMode .timer-presets input { padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; font-size: 14px; }
@@ -295,6 +305,10 @@ h3 { font-size: 13px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
 .cook-ingr-item.checked .ci-txt { text-decoration: line-through; color: var(--text-secondary); }
 .cook-ingr-item .ci-qty { font-weight: 600; margin-right: 3px; }
 .cook-ingr-item.instep { background: var(--accent-light); border-radius: 8px; margin: 0 -6px; padding: 10px 10px; border-bottom-color: transparent; }
+.cook-scale-row { display: flex; align-items: center; gap: 5px; padding: 2px 0 10px; }
+.cook-scale-row button { padding: 5px 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 13px; font-weight: 600; }
+.cook-scale-row button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.cook-scale-serves { font-size: 12px; color: var(--text-secondary); margin-left: 4px; }
 #cookIngrOverlay { position: absolute; inset: 0; background: var(--bg); z-index: 12; display: flex; flex-direction: column; padding: max(env(safe-area-inset-top), 16px) 20px max(env(safe-area-inset-bottom), 16px); transform: translateY(102%); transition: transform .28s cubic-bezier(.32,.72,.35,1); }
 #cookIngrOverlay.open { transform: translateY(0); }
 #cookIngrOverlay h3 { font-family: var(--serif); font-size: 22px; font-weight: 600; }
@@ -460,6 +474,10 @@ nav button.active svg { animation: tabSpring .4s cubic-bezier(.34,1.56,.64,1); }
 </style>
 </head>
 <body>
+<div id="alarmBanner" onclick="stopAlarm()">
+  <div class="ab-text" id="alarmBannerText"></div>
+  <div class="ab-sub">Tap to dismiss</div>
+</div>
 
 <!-- ========== SETUP SCREEN (shown before family code is set) ========== -->
 <div id="setupScreen">
@@ -531,10 +549,12 @@ nav button.active svg { animation: tabSpring .4s cubic-bezier(.34,1.56,.64,1); }
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
       <h1>Recipes</h1>
       <div style="display:flex; gap:6px;">
+        <button class="btn btn-secondary btn-sm" onclick="document.getElementById('fridgePhotoInput').click()" title="Photo your fridge, get dinner ideas">📸</button>
         <button class="btn btn-secondary btn-sm" onclick="openChatModal()" title="Ask Claude about recipes">💬</button>
         <button class="btn btn-secondary btn-sm" onclick="openUrlImport()">Import URL</button>
         <button class="btn btn-primary btn-sm" onclick="openRecipeModal()">+ Add</button>
       </div>
+      <input type="file" id="fridgePhotoInput" accept="image/*" capture="environment" style="display:none;" onchange="fridgePhotoPicked(this)">
     </div>
     <div class="search-bar">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
@@ -620,6 +640,12 @@ nav button.active svg { animation: tabSpring .4s cubic-bezier(.34,1.56,.64,1); }
       </div>
       <p id="syncInfo" style="font-size:13px; color:var(--text-secondary);"></p>
       <p id="appVersion" style="font-size:11px; color:var(--text-secondary); margin-top:6px;"></p>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
+      <h3 style="margin-bottom:8px;">Backups</h3>
+      <p style="font-size:13px; color:var(--text-secondary); margin-bottom:10px;">A snapshot of everything is saved automatically once a day (newest 14 kept). Restore replaces current data on every device.</p>
+      <div id="backupsList"></div>
     </div>
 
     <div class="card" style="margin-bottom:16px;">
@@ -856,6 +882,15 @@ nav button.active svg { animation: tabSpring .4s cubic-bezier(.34,1.56,.64,1); }
               <option value="claude-opus-4-6">Opus 4.6</option>
             </select>
           </div>
+          <div>
+            <label style="color:var(--text-secondary);display:block;margin-bottom:2px;">Fridge Photos</label>
+            <select id="claudeModel_fridge" class="claude-model-select" onchange="saveClaudeSettings()">
+              <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
+              <option value="claude-sonnet-4-5-20241022">Sonnet 4.5</option>
+              <option value="claude-sonnet-5" selected>Sonnet 5</option>
+              <option value="claude-opus-4-6">Opus 4.6</option>
+            </select>
+          </div>
         </div>
       </div>
       <p style="font-size:11px; color:var(--text-secondary); margin-top:4px;">The Claude API can't be called directly from a browser. You need a small proxy — <a href="#" onclick="showProxyInstructions();return false;" style="color:var(--blue);">see setup instructions</a>.</p>
@@ -910,6 +945,7 @@ nav button.active svg { animation: tabSpring .4s cubic-bezier(.34,1.56,.64,1); }
     <div class="form-group"><label>Recipe Name</label><input type="text" id="recipeName" placeholder="e.g., Chicken Stir Fry"></div>
     <div class="form-group"><label>Cuisine</label><select id="recipeCuisine"><option value="">Select a cuisine...</option></select></div>
     <div class="form-group"><label>Cook time in minutes (optional)</label><input type="number" id="recipeCookMin" min="0" inputmode="numeric" placeholder="e.g., 30"></div>
+    <div class="form-group"><label>Servings (optional)</label><input type="number" id="recipeServings" min="1" inputmode="numeric" placeholder="e.g., 4"></div>
     <div class="form-group"><label>Appliance</label><select id="recipeAppliance"><option value="auto">Auto-detect from steps</option><option value="oven">Oven</option><option value="sousvide">Sous vide</option><option value="none">None</option></select></div>
     <div class="form-group"><label>Source URL (optional)</label><input type="url" id="recipeUrl" placeholder="https://..."></div>
     <div class="form-group"><label>Ingredients</label><div id="ingredientRows"></div><button class="btn btn-secondary btn-sm" onclick="addIngredientRow()" style="margin-top:6px;">+ Ingredient</button></div>
@@ -953,6 +989,7 @@ nav button.active svg { animation: tabSpring .4s cubic-bezier(.34,1.56,.64,1); }
   <div class="cook-header">
     <div class="cook-title" id="cookTitle"></div>
     <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+      <button class="cook-add-btn" id="cookVoiceBtn" onclick="toggleCookVoice()" title="Voice control">🎤</button>
       <button class="cook-add-btn" id="cookIngrBtn" onclick="toggleCookIngredients(true)">🧾 Ingredients</button>
       <button style="background:none;border:none;font-size:26px;color:var(--text-secondary);padding:4px 8px;" onclick="closeCookMode()">&times;</button>
     </div>
@@ -1121,6 +1158,16 @@ nav button.active svg { animation: tabSpring .4s cubic-bezier(.34,1.56,.64,1); }
   </div>
 </div>
 
+<div class="modal-overlay" id="fridgeIdeasModal">
+  <div class="modal">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+      <h2>📸 Fridge Check</h2>
+      <button style="background:none; border:none; font-size:24px; color:var(--text-secondary);" onclick="closeFridgeIdeas()">&times;</button>
+    </div>
+    <div id="fridgeIdeasContent" style="font-size:14px;line-height:1.6;"></div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -1180,7 +1227,7 @@ function uid() { return Date.now().toString(36) + Math.random().toString(36).sli
 function getMonday(d) { d = new Date(d); const day = d.getDay(); d.setDate(d.getDate() - day + (day === 0 ? -6 : 1)); d.setHours(0,0,0,0); return d; }
 function fmtDate(d) { return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); }
 function dateKey(d) { const p = n => String(n).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); }
-function genCode() { const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let c = ''; for (let i = 0; i < 6; i++) c += chars[Math.floor(Math.random() * chars.length)]; return c; }
+function genCode() { const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let c = ''; for (let i = 0; i < 10; i++) c += chars[Math.floor(Math.random() * chars.length)]; return c; }
 
 // Persist to localStorage as offline backup
 function persistLocal() { try { localStorage.setItem('mp_data', JSON.stringify(data)); localStorage.setItem('mp_family', familyCode); } catch(e) {} }
@@ -1216,6 +1263,7 @@ function persist() {
 
 async function saveToFirebase() {
   if (!firebaseReady || !familyCode || !db) return;
+  await authReady();
   const docRef = db.collection('families').doc(familyCode);
   // Collect only the sections that changed since the last save/snapshot
   const payload = {};
@@ -1242,9 +1290,92 @@ async function saveToFirebase() {
   SYNC_FIELDS.forEach(f => { _lastSynced[f] = JSON.stringify(_syncFieldValue(f)); });
 }
 
+// --- Anonymous auth ---
+// Lets Firestore rules require request.auth != null. Backward compatible: if
+// Anonymous sign-in isn't enabled in the Firebase console, this resolves after
+// a short timeout and everything works exactly as before (with open rules).
+let _authReadyPromise = null;
+function authReady() {
+  if (!_authReadyPromise) {
+    _authReadyPromise = new Promise(res => {
+      if (!firebaseReady || !firebase.auth) return res();
+      let settled = false;
+      const finish = () => { if (!settled) { settled = true; res(); } };
+      setTimeout(finish, 3000);
+      try {
+        firebase.auth().onAuthStateChanged(u => { if (u) finish(); });
+        firebase.auth().signInAnonymously().catch(e => { console.log('Anon auth:', e.code); finish(); });
+      } catch (e) { finish(); }
+    });
+  }
+  return _authReadyPromise;
+}
+
+// --- Automatic daily backups ---
+// Snapshots the whole data object to families/{code}/backups/{date} once per
+// day per device, keeps the newest 14. Restore UI lives in Settings.
+async function backupIfNeeded() {
+  if (!firebaseReady || !familyCode || !db) return;
+  const today = dateKey(new Date());
+  const marker = 'mp_backup_' + familyCode;
+  if (localStorage.getItem(marker) === today) return;
+  // Never snapshot an empty book over a real one (e.g. first load on a new device)
+  if (!data.recipes.length && !Object.keys(data.mealPlan || {}).length) return;
+  try {
+    await authReady();
+    const payload = {};
+    SYNC_FIELDS.forEach(f => { payload[f] = _syncFieldValue(f); });
+    payload.savedAt = firebase.firestore.FieldValue.serverTimestamp();
+    const col = db.collection('families').doc(familyCode).collection('backups');
+    await col.doc(today).set(payload);
+    localStorage.setItem(marker, today);
+    const snap = await col.get();
+    const ids = snap.docs.map(d => d.id).sort();
+    for (const id of ids.slice(0, Math.max(0, ids.length - 14))) await col.doc(id).delete();
+    console.log('[Backup] Saved', today);
+  } catch (e) { console.log('Backup failed:', e); }
+}
+
+async function renderBackupsList() {
+  const el = document.getElementById('backupsList'); if (!el) return;
+  if (!firebaseReady || !familyCode || !db) { el.innerHTML = '<p style="font-size:12px;color:var(--text-secondary);">Backups need Firebase sync.</p>'; return; }
+  el.innerHTML = '<div class="skel" style="width:70%;"></div>';
+  try {
+    await authReady();
+    const snap = await db.collection('families').doc(familyCode).collection('backups').get();
+    const docs = snap.docs.sort((a, b) => b.id.localeCompare(a.id));
+    if (!docs.length) { el.innerHTML = '<p style="font-size:12px;color:var(--text-secondary);">No backups yet — one is saved automatically each day the app is opened.</p>'; return; }
+    el.innerHTML = docs.map(d => {
+      const b = d.data();
+      return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px;">
+        <span><strong>${esc(d.id)}</strong> · ${(b.recipes || []).length} recipes · ${Object.keys(b.mealPlan || {}).length} planned days</span>
+        <button class="btn btn-secondary btn-sm" onclick="restoreBackup('${esc(d.id)}')">Restore</button>
+      </div>`;
+    }).join('');
+  } catch (e) { el.innerHTML = `<p style="font-size:12px;color:var(--red);">Could not load backups: ${esc(e.message)}</p>`; }
+}
+
+async function restoreBackup(id) {
+  if (!confirm('Restore the backup from ' + id + '? Current data will be replaced on every device. (Today\'s backup still exists if you change your mind.)')) return;
+  try {
+    await authReady();
+    const doc = await db.collection('families').doc(familyCode).collection('backups').doc(id).get();
+    if (!doc.exists) { toast('Backup not found'); return; }
+    const b = doc.data();
+    SYNC_FIELDS.forEach(f => { if (b[f] !== undefined) data[f] = b[f]; });
+    persistLocal();
+    await saveToFirebase();
+    toast('Restored backup from ' + id + ' — reloading…');
+    setTimeout(() => location.reload(), 900);
+  } catch (e) { toast('⚠️ Restore failed: ' + e.message); }
+}
+
 // Listen for real-time changes from other devices
 function startListening() {
   if (!firebaseReady || !familyCode || !db) return;
+  authReady().then(() => { startListeningNow(); });
+}
+function startListeningNow() {
   if (unsubscribe) unsubscribe();
   unsubscribe = db.collection('families').doc(familyCode).onSnapshot(doc => {
     if (!doc.exists) return;
@@ -1366,7 +1497,7 @@ function showView(name) {
   if (name === 'plan') renderMealPlan();
   if (name === 'grocery') renderGrocery();
   if (name === 'staples') renderStaples();
-  if (name === 'sync') { renderDoorDashSettings(); updateCalendarSettingsUI(); renderCuisines(); renderSync(); renderKids(); renderBlogsList(); const nk=document.getElementById('nutritionApiKey'); if(nk) nk.value=localStorage.getItem('nutrition_api_key')||''; loadClaudeSettings(); loadParentingPhilosophy(); loadFridgeSettings(); loadAnovaPat(); loadSonosSettings(); loadWeatherSettings(); }
+  if (name === 'sync') { renderDoorDashSettings(); updateCalendarSettingsUI(); renderCuisines(); renderSync(); renderKids(); renderBlogsList(); renderBackupsList(); const nk=document.getElementById('nutritionApiKey'); if(nk) nk.value=localStorage.getItem('nutrition_api_key')||''; loadClaudeSettings(); loadParentingPhilosophy(); loadFridgeSettings(); loadAnovaPat(); loadSonosSettings(); loadWeatherSettings(); }
 }
 
 // ===========================================================================
@@ -2725,8 +2856,11 @@ function renderRecipes() {
   discoverEl.innerHTML = dhtml;
 }
 
+let _detailScale = 1, _detailScaleFor = null;
+function setDetailScale(s) { _detailScale = s; _detailScaleFor = currentDetailId; showRecipeDetail(currentDetailId); }
 function showRecipeDetail(id) {
   const r = data.recipes.find(x=>x.id===id); if(!r)return;
+  if (_detailScaleFor !== id) { _detailScale = 1; _detailScaleFor = id; }
   currentDetailId = id;
   document.getElementById('detailTitle').textContent = r.name;
   let html = '';
@@ -2752,21 +2886,25 @@ function showRecipeDetail(id) {
     </div>`;
   }
   if (safeUrl(r.url)) html += `<p style="margin-bottom:12px;"><a href="${safeUrl(r.url)}" target="_blank" rel="noopener" style="color:var(--blue);font-size:14px;">View original recipe &rarr;</a></p>`;
-  html += '<h3 style="margin-bottom:8px;">Ingredients</h3>';
+  html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><h3>Ingredients' + (r.servings ? ` <span style="font-size:12px;font-weight:600;color:var(--text-secondary);">· serves ${_detailScale === 1 ? r.servings : r.servings + ' → ' + fmtQtyNum(r.servings * _detailScale)}</span>` : '') + '</h3>';
+  html += '<div style="display:flex;gap:4px;">' + [[0.5,'½×'],[1,'1×'],[2,'2×'],[3,'3×']].map(([v,l]) => `<button onclick="setDetailScale(${v})" style="padding:4px 10px;border-radius:999px;border:1px solid ${_detailScale===v?'var(--accent)':'var(--border)'};background:${_detailScale===v?'var(--accent)':'var(--surface)'};color:${_detailScale===v?'#fff':'var(--text)'};font-size:12px;font-weight:600;">${l}</button>`).join('') + '</div></div>';
   if (r.ingredients.length) {
     const hasClaudeKey = !!getProxyUrl();
     html += '<ul style="padding-left:18px;margin-bottom:16px;">';
     r.ingredients.forEach((ing, idx) => {
       html += `<li style="margin-bottom:4px;font-size:15px;display:flex;align-items:center;gap:6px;">`;
-      html += `<span>${esc(ing.quantity?ing.quantity+' ':'')}${esc(ing.name)} <span style="color:var(--text-secondary);font-size:12px;">${esc(ing.category)}</span></span>`;
+      html += `<span>${esc(ing.quantity?scaleQty(ing.quantity,_detailScale)+' ':'')}${esc(ing.name)} <span style="color:var(--text-secondary);font-size:12px;">${esc(ing.category)}</span></span>`;
       if (hasClaudeKey) html += `<button onclick="event.stopPropagation();suggestSubstitution('${esc(ing.name).replace(/'/g,"\\'")}','${esc(r.name).replace(/'/g,"\\'")}')" style="background:none;border:none;font-size:11px;color:var(--blue);cursor:pointer;padding:1px 4px;white-space:nowrap;" title="Find a swap">🔄 swap</button>`;
       html += `</li>`;
     });
     html += '</ul>';
   }
   if (r.notes) {
-    html += `<h3 style="margin-bottom:8px;">Steps${r.stepsAI ? ' <span style="font-size:11px;font-weight:600;color:var(--accent);background:var(--accent-light);padding:1px 6px;border-radius:4px;vertical-align:middle;">✨ AI-written</span>' : ''}</h3>`;
+    html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><h3>Steps${r.stepsAI ? ' <span style="font-size:11px;font-weight:600;color:var(--accent);background:var(--accent-light);padding:1px 6px;border-radius:4px;vertical-align:middle;">✨ AI-written</span>' : ''}</h3>`;
+    if (getProxyUrl()) html += `<button onclick="rewriteRecipeSteps('${r.id}', this)" style="background:none;border:none;font-size:12px;color:var(--blue);cursor:pointer;">✨ Rewrite</button>`;
+    html += `</div>`;
     html += `<p style="font-size:15px;white-space:pre-wrap;color:var(--text-secondary);">${esc(r.notes)}</p>`;
+    if (r.prevNotes) html += `<button onclick="restorePrevSteps('${r.id}')" style="background:none;border:none;font-size:12px;color:var(--text-secondary);cursor:pointer;padding:4px 0;">↩︎ Restore previous steps</button>`;
   } else if (getProxyUrl()) {
     html += `<button class="btn btn-secondary" style="width:100%;margin-bottom:6px;" onclick="generateRecipeSteps('${r.id}', this)">✨ Write steps with AI</button>`;
     html += `<p style="font-size:12px;color:var(--text-secondary);margin-bottom:8px;">No steps yet — Claude writes them from the ingredient list. They power Cook Mode and sync to every device.</p>`;
@@ -2988,6 +3126,7 @@ function openRecipeModal(editId) {
   document.getElementById('recipeEditId').value = r?r.id:'';
   document.getElementById('recipeName').value = r?r.name:'';
   document.getElementById('recipeCookMin').value = r&&r.cookMinutes?r.cookMinutes:'';
+  document.getElementById('recipeServings').value = r&&r.servings?r.servings:'';
   document.getElementById('recipeAppliance').value = (r && r.appliance) || 'auto';
   document.getElementById('recipeUrl').value = r?(r.url||''):'';
   document.getElementById('recipeNotes').value = r?(r.notes||''):'';
@@ -3021,9 +3160,10 @@ function saveRecipe() {
   const notes = document.getElementById('recipeNotes').value.trim();
   const cuisine = document.getElementById('recipeCuisine').value;
   const cookMinutes = parseInt(document.getElementById('recipeCookMin').value, 10) || 0;
+  const servings = parseInt(document.getElementById('recipeServings').value, 10) || 0;
   const appliance = document.getElementById('recipeAppliance').value || 'auto';
-  if (editId) { const r = data.recipes.find(x=>x.id===editId); if(r){if(r.notes!==notes)r.stepsAI=false;r.name=name;r.ingredients=ingredients;r.notes=notes;r.url=url;r.cuisine=cuisine;r.cookMinutes=cookMinutes;r.appliance=appliance;} }
-  else data.recipes.push({id:uid(),name,ingredients,notes,url,cuisine,cookMinutes,appliance});
+  if (editId) { const r = data.recipes.find(x=>x.id===editId); if(r){if(r.notes!==notes)r.stepsAI=false;r.name=name;r.ingredients=ingredients;r.notes=notes;r.url=url;r.cuisine=cuisine;r.cookMinutes=cookMinutes;r.servings=servings;r.appliance=appliance;} }
+  else data.recipes.push({id:uid(),name,ingredients,notes,url,cuisine,cookMinutes,servings,appliance});
   persist(); closeRecipeModal(); renderRecipes();
   toast(editId?'Updated':'Recipe added');
 }
@@ -3088,7 +3228,7 @@ Core principles:
 Tone: Warm, non-judgmental, practical. Avoid fear-based or shame-based framing. When in doubt, default to connection.`;
 function getPhilosophy() { return localStorage.getItem('parenting_philosophy') || DEFAULT_PHILOSOPHY; }
 
-const CLAUDE_FEATURES = ['mealplan','recipechat','substitutions','calendar','tips','parentchat','steps'];
+const CLAUDE_FEATURES = ['mealplan','recipechat','substitutions','calendar','tips','parentchat','steps','fridge'];
 const CLAUDE_MODEL_DEFAULTS = {
   mealplan: 'claude-sonnet-5',
   recipechat: 'claude-sonnet-5',
@@ -3097,6 +3237,7 @@ const CLAUDE_MODEL_DEFAULTS = {
   tips: 'claude-sonnet-5',
   parentchat: 'claude-sonnet-5',
   steps: 'claude-sonnet-5',
+  fridge: 'claude-sonnet-5',
 };
 
 function getModelForFeature(feature) {
@@ -3508,6 +3649,7 @@ function buildStepsPrompt(r) {
 
 Recipe: ${r.name}${r.cuisine ? ' (' + r.cuisine + ' cuisine)' : ''}
 ${r.cookMinutes ? 'Target total time: about ' + r.cookMinutes + ' minutes.' : ''}
+${r.servings ? 'Serves ' + r.servings + '.' : ''}
 Ingredients:
 ${ing || '(no ingredient list saved — write a standard version of this dish)'}
 
@@ -3561,6 +3703,39 @@ async function generateRecipeSteps(id, btn) {
   }
 }
 
+// Rewrite existing steps (keeps the old version for one-tap restore)
+async function rewriteRecipeSteps(id, btn) {
+  const r = data.recipes.find(x => x.id === id); if (!r) return;
+  if (!confirm('Have Claude rewrite the steps for "' + r.name + '"? Your current version is kept and can be restored.')) return;
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Rewriting…'; }
+  const oldNotes = r.notes;
+  try {
+    r.notes = ''; // so the generator treats it as fresh
+    await generateStepsForRecipe(r);
+    const live = data.recipes.find(x => x.id === id) || r;
+    live.prevNotes = oldNotes;
+    persist();
+    toast('✨ Steps rewritten — old version kept');
+    if (currentDetailId === id) showRecipeDetail(id);
+  } catch (e) {
+    const live = data.recipes.find(x => x.id === id) || r;
+    if (!(live.notes || '').trim()) live.notes = oldNotes; // put it back on failure
+    persist();
+    toast('⚠️ ' + e.message);
+    if (currentDetailId === id) showRecipeDetail(id);
+  }
+}
+function restorePrevSteps(id) {
+  const r = data.recipes.find(x => x.id === id); if (!r || !r.prevNotes) return;
+  const cur = r.notes;
+  r.notes = r.prevNotes;
+  r.prevNotes = cur; // swap, so you can flip back and forth
+  r.stepsAI = false;
+  persist();
+  showRecipeDetail(id);
+  toast('Previous steps restored');
+}
+
 // Batch: write steps for every recipe that has none, a few at a time
 let _stepsBatch = null; // { done, total } while running
 async function generateAllMissingSteps() {
@@ -3606,6 +3781,99 @@ function renderStepsBanner() {
     <div style="flex:1;"><div class="card-title">${missing.length} recipe${missing.length !== 1 ? 's' : ''} without steps</div><div class="card-sub">Have Claude write Cook Mode steps from each ingredient list.</div></div>
     <button class="btn btn-primary btn-sm" style="flex-shrink:0;" onclick="generateAllMissingSteps()">✨ Write all</button>
   </div>`;
+}
+
+// --- FRIDGE PHOTO → DINNER IDEAS (Claude vision) ---
+function closeFridgeIdeas() { document.getElementById('fridgeIdeasModal').classList.remove('open'); }
+
+function _resizeImageToJpeg(file, maxDim) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const s = Math.min(1, maxDim / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      resolve(c.toDataURL('image/jpeg', 0.8));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not read that image')); };
+    img.src = url;
+  });
+}
+
+async function fridgePhotoPicked(input) {
+  const file = input.files && input.files[0];
+  input.value = '';
+  if (!file) return;
+  if (!getProxyUrl()) { toast('Set up Claude AI in Settings first'); showView('sync'); return; }
+  const modal = document.getElementById('fridgeIdeasModal');
+  const el = document.getElementById('fridgeIdeasContent');
+  modal.classList.add('open');
+  el.innerHTML = '<p style="color:var(--text-secondary);margin-bottom:10px;">Looking at what you\'ve got…</p><div class="skel" style="width:85%;"></div><div class="skel" style="width:70%;"></div><div class="skel" style="width:80%;"></div>';
+  try {
+    const dataUrl = await _resizeImageToJpeg(file, 1024);
+    const b64 = dataUrl.split(',')[1];
+    const book = data.recipes.map(r => `- ${r.name} [${r.id}]: ${(r.ingredients || []).map(i => i.name).join(', ')}`).join('\n');
+    const prompt = `This is a photo of our fridge/pantry. Identify the usable ingredients you can see, then suggest 3-5 family dinners we could make tonight.
+
+Prefer recipes from our book when the visible ingredients roughly cover them. Our recipe book:
+${book || '(empty)'}
+
+Reply ONLY as JSON:
+{"seen":["ingredient","..."],"ideas":[{"name":"dish","recipeId":"id from book or empty string","uses":["visible ingredients used"],"missing":["items we'd still need"],"note":"one short sentence"}]}`;
+    const reply = await callClaude('', {
+      feature: 'fridge',
+      system: 'You are a practical family dinner assistant. Reply with ONLY valid JSON.',
+      maxTokens: 1200,
+      messages: [{ role: 'user', content: [
+        { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b64 } },
+        { type: 'text', text: prompt }
+      ] }],
+    });
+    const cleaned = reply.trim().replace(/```json\n?/g, '').replace(/```/g, '').trim();
+    let res;
+    try { res = JSON.parse(cleaned); } catch (e) {
+      el.innerHTML = `<div style="white-space:pre-wrap;">${esc(reply)}</div>`; return;
+    }
+    let html = '';
+    if (res.seen && res.seen.length) {
+      html += '<p style="font-size:12px;color:var(--text-secondary);margin-bottom:6px;">Spotted in your fridge:</p><div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:14px;">';
+      html += res.seen.map(s => `<span style="background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:3px 10px;font-size:12px;">${esc(s)}</span>`).join('');
+      html += '</div>';
+    }
+    (res.ideas || []).forEach((idea, i) => {
+      const bookRecipe = idea.recipeId && data.recipes.find(r => r.id === idea.recipeId);
+      html += `<div style="padding:12px;background:var(--bg);border-radius:var(--radius);margin-bottom:10px;">`;
+      html += `<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">`;
+      html += `<strong style="font-size:15px;">${esc(idea.name)}${bookRecipe ? ' <span style="font-size:10px;color:var(--accent);background:var(--accent-light);padding:1px 6px;border-radius:4px;">in your book</span>' : ''}</strong>`;
+      if (bookRecipe) html += `<button class="btn btn-sm btn-primary" style="flex-shrink:0;" onclick="closeFridgeIdeas();showRecipeDetail('${bookRecipe.id}')">Open</button>`;
+      html += `</div>`;
+      if (idea.note) html += `<div style="font-size:12px;color:var(--text-secondary);margin-top:3px;">${esc(idea.note)}</div>`;
+      if (idea.uses && idea.uses.length) html += `<div style="font-size:12px;margin-top:5px;">✅ Uses: ${esc(idea.uses.join(', '))}</div>`;
+      if (idea.missing && idea.missing.length) {
+        html += `<div style="font-size:12px;margin-top:2px;">🛒 Missing: ${esc(idea.missing.join(', '))} <button onclick='addMissingToGrocery(${JSON.stringify(idea.missing).replace(/'/g, "\\'")})' style="background:none;border:none;color:var(--blue);font-size:11px;cursor:pointer;">+ add to list</button></div>`;
+      }
+      html += `</div>`;
+    });
+    if (!html) html = '<p style="color:var(--text-secondary);">No suggestions came back — try a clearer photo.</p>';
+    el.innerHTML = html;
+  } catch (e) {
+    el.innerHTML = `<p style="color:var(--red);">${esc(e.message)}</p>`;
+  }
+}
+
+function addMissingToGrocery(items) {
+  if (!data.groceryExtras) data.groceryExtras = [];
+  let added = 0;
+  (items || []).forEach(name => {
+    if (!name) return;
+    const exists = data.groceryExtras.some(x => (x.name || '').toLowerCase() === name.toLowerCase());
+    if (!exists) { data.groceryExtras.push({ name, category: 'Other' }); added++; }
+  });
+  persist();
+  toast(added ? '🛒 Added ' + added + ' item' + (added !== 1 ? 's' : '') + ' to the grocery list' : 'Already on the list');
 }
 
 // --- CLAUDE CALENDAR SUMMARIES ---
@@ -4514,6 +4782,69 @@ function updateGroceryRangeInfo() {
   el.textContent = `${days} day${days!==1?'s':''}, ${mealCount} meal${mealCount!==1?'s':''} with ingredients`;
 }
 
+// --- Quantity parsing (shared by grocery merging and serving scaling) ---
+const _UNI_FRAC = { '¼': '1/4', '½': '1/2', '¾': '3/4', '⅓': '1/3', '⅔': '2/3', '⅛': '1/8' };
+function parseQty(q) {
+  if (!q) return null;
+  q = String(q).trim().replace(/[¼½¾⅓⅔⅛]/g, c => ' ' + _UNI_FRAC[c]).replace(/\s+/g, ' ').trim();
+  // "1 1/2 cups" or "1/2 tsp"
+  let m = q.match(/^(?:(\d+)\s+)?(\d+)\s*\/\s*(\d+)\s*(.*)$/);
+  if (m && parseInt(m[3], 10)) {
+    const num = (m[1] ? parseInt(m[1], 10) : 0) + parseInt(m[2], 10) / parseInt(m[3], 10);
+    return num ? { num, unit: (m[4] || '').trim() } : null;
+  }
+  // "2 cups", "1.5 lb", "3"
+  m = q.match(/^(\d+(?:\.\d+)?)\s*(.*)$/);
+  if (!m) return null;
+  const num = parseFloat(m[1]);
+  return num ? { num, unit: (m[2] || '').trim() } : null;
+}
+function fmtQtyNum(n) {
+  const whole = Math.floor(n + 1e-9), frac = n - whole;
+  const F = [[0, ''], [0.25, '¼'], [1 / 3, '⅓'], [0.5, '½'], [2 / 3, '⅔'], [0.75, '¾']];
+  let best = null, bestD = 0.05;
+  F.forEach(([v, s]) => { const d = Math.abs(frac - v); if (d < bestD) { bestD = d; best = s; } });
+  if (best === null) return String(Math.round(n * 100) / 100);
+  if (!whole && !best) return '0';
+  return (whole || !best ? whole : '') + best;
+}
+function normUnit(u) {
+  u = (u || '').toLowerCase().replace(/\.$/, '').replace(/\s+of$/, '').trim();
+  const map = { tablespoons: 'tbsp', tablespoon: 'tbsp', tbsps: 'tbsp', teaspoons: 'tsp', teaspoon: 'tsp', tsps: 'tsp', pounds: 'lb', pound: 'lb', lbs: 'lb', ounces: 'oz', ounce: 'oz', grams: 'g', gram: 'g' };
+  if (map[u]) return map[u];
+  return u.length > 2 ? u.replace(/s$/, '') : u;
+}
+// Scale "1 1/2 cups" by 2 → "3 cups"; unparseable quantities get a ×2 marker
+function scaleQty(q, factor) {
+  if (!q || factor === 1) return q || '';
+  const p = parseQty(q);
+  if (!p) return q + ' ×' + fmtQtyNum(factor);
+  let unit = p.unit;
+  const scaled = p.num * factor;
+  // Fix plurals: "1 cup" ×2 → "2 cups", "2 cups" ×0.5 → "1 cup"
+  if (/^[a-z]+s$/i.test(unit) && scaled <= 1) unit = unit.replace(/s$/i, '');
+  else if (/^(cup|clove|can|slice|piece|egg|onion|carrot|lime|lemon)$/i.test(unit) && scaled > 1) unit += 's';
+  return fmtQtyNum(scaled) + (unit ? ' ' + unit : '');
+}
+// Combine ["1 lb","1 lb","2 cups"] → summed when units match, joined otherwise
+function combineQuantities(qs) {
+  if (!qs || !qs.length) return '';
+  if (qs.length === 1) return qs[0];
+  const parsed = qs.map(parseQty);
+  if (parsed.every(Boolean)) {
+    const u0 = normUnit(parsed[0].unit);
+    if (parsed.every(p => normUnit(p.unit) === u0)) {
+      const total = parsed.reduce((s, p) => s + p.num, 0);
+      // Prefer an already-plural unit spelling when the total warrants it
+      let unit = parsed[0].unit;
+      if (total > 1) { const plural = parsed.map((p, i) => qs[i]).map(q => (parseQty(q) || {}).unit).find(u => /s$/i.test(u || '')); if (plural) unit = plural; }
+      else if (/^[a-z]+s$/i.test(unit)) unit = unit.replace(/s$/i, '');
+      return fmtQtyNum(total) + (unit ? ' ' + unit : '');
+    }
+  }
+  return qs.join(' + ');
+}
+
 function getGroceryItems() {
   const items = {};
   const ddDates = new Set((data.doordash||{orders:[]}).orders.map(o=>o.date));
@@ -4558,7 +4889,7 @@ function renderGrocery() {
     ci.forEach(item => {
       const key = item.name.toLowerCase();
       const checked = data.checkedItems[key] ? 'checked' : '';
-      html += `<div class="grocery-item ${checked}" data-key="${esc(key)}" role="checkbox" aria-checked="${checked ? 'true' : 'false'}" onclick="toggleCheck(this,'${esc(key)}')"><span class="gcheck"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span><span class="item-name">${esc(item.name)}</span><span class="item-qty">${esc(item.quantities.join(', '))}</span>${item.isExtra ? `<button onclick="event.stopPropagation();removeGroceryExtra('${esc(key)}')" style="margin-left:auto;background:none;border:none;color:var(--red);font-size:16px;padding:2px 6px;flex-shrink:0;">✕</button>` : ''}</div>`;
+      html += `<div class="grocery-item ${checked}" data-key="${esc(key)}" role="checkbox" aria-checked="${checked ? 'true' : 'false'}" onclick="toggleCheck(this,'${esc(key)}')"><span class="gcheck"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span><span class="item-name">${esc(item.name)}</span><span class="item-qty">${esc(combineQuantities(item.quantities))}</span>${item.isExtra ? `<button onclick="event.stopPropagation();removeGroceryExtra('${esc(key)}')" style="margin-left:auto;background:none;border:none;color:var(--red);font-size:16px;padding:2px 6px;flex-shrink:0;">✕</button>` : ''}</div>`;
     });
     html += '</div>';
   });
@@ -4860,10 +5191,13 @@ document.addEventListener('visibilitychange', () => {
 
 function openCookMode(recipeId) {
   const r = data.recipes.find(x => x.id === recipeId); if (!r) return;
-  _cook = { recipe: r, steps: parseCookSteps(r), idx: 0, timers: {}, ingrChecked: {} };
+  _cook = { recipe: r, steps: parseCookSteps(r), idx: 0, timers: {}, ingrChecked: {}, scale: 1 };
   document.getElementById('cookTitle').textContent = r.name;
   document.getElementById('cookMode').classList.add('open');
   document.getElementById('cookIngrOverlay').classList.remove('open');
+  const vb = document.getElementById('cookVoiceBtn');
+  if (vb) vb.style.display = voiceSupported() ? '' : 'none';
+  updateVoiceBtn();
   acquireCookWakeLock();
   renderCookStep();
   renderCookTimers();
@@ -4885,12 +5219,16 @@ function renderCookIngredients() {
   if (btn) btn.style.display = '';
   if (panel) panel.style.display = '';
   const lower = (steps[idx] || '').toLowerCase();
-  const html = ings.map((ing, i) => {
+  const scale = _cook.scale || 1;
+  const scaleRow = `<div class="cook-scale-row">` + [[0.5,'½×'],[1,'1×'],[2,'2×'],[3,'3×']].map(([v,l]) =>
+    `<button class="${scale===v?'active':''}" onclick="setCookScale(${v})">${l}</button>`).join('') +
+    (recipe.servings ? `<span class="cook-scale-serves">serves ${scale === 1 ? recipe.servings : fmtQtyNum(recipe.servings * scale)}</span>` : '') + `</div>`;
+  const html = scaleRow + ings.map((ing, i) => {
     const inStep = _ingMatchesStep(ing, lower);
     const checked = _cook.ingrChecked[i];
     return `<div class="cook-ingr-item ${checked ? 'checked' : ''}${inStep ? ' instep' : ''}" onclick="toggleCookIngredient(${i})">
       <span class="ci-box">${checked ? '✓' : ''}</span>
-      <span class="ci-txt">${ing.quantity ? '<span class="ci-qty">' + esc(ing.quantity) + '</span>' : ''}${esc(ing.name)}</span>
+      <span class="ci-txt">${ing.quantity ? '<span class="ci-qty">' + esc(scaleQty(ing.quantity, scale)) + '</span>' : ''}${esc(ing.name)}</span>
     </div>`;
   }).join('');
   const p = document.getElementById('cookIngrListPanel'); if (p) p.innerHTML = html;
@@ -4904,15 +5242,21 @@ function toggleCookIngredient(i) {
   renderCookIngredients();
 }
 
+function setCookScale(s) {
+  if (!_cook) return;
+  _cook.scale = s;
+  renderCookStep(); // re-renders "for this step" quantities + ingredient lists
+}
+
 function toggleCookIngredients(open) {
   document.getElementById('cookIngrOverlay').classList.toggle('open', open);
 }
 
 function closeCookMode() {
-  if (_cook) Object.values(_cook.timers).forEach(t => clearInterval(t.interval));
   _cook = null;
-  _cookTimers.forEach(t => clearInterval(t.interval));
   _cookTimers = [];
+  stopAlarm();
+  stopCookVoice();
   document.getElementById('cookMode').classList.remove('open');
   document.getElementById('cookIngrOverlay').classList.remove('open');
   const fridgeOpen = document.getElementById('fridgeMode').classList.contains('open');
@@ -4924,16 +5268,63 @@ function closeCookMode() {
 // --- Customizable multi-timers (run concurrently while cooking) ---
 let _cookTimers = [];
 let _timerSeq = 0;
-function cookBeep() {
+
+// --- Alarm engine ---
+// iOS blocks audio that wasn't unlocked by a touch, so we keep ONE AudioContext
+// and resume it on every user gesture. Timers store an absolute end timestamp
+// (not a decrementing counter), so throttled background tabs can't lose time.
+let _audioCtx = null;
+function unlockAudio() {
   try {
     const AC = window.AudioContext || window.webkitAudioContext;
-    const a = new AC(); const o = a.createOscillator(); const g = a.createGain();
-    o.connect(g); g.connect(a.destination); o.type = 'sine'; o.frequency.value = 880;
-    g.gain.setValueAtTime(0.0001, a.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.3, a.currentTime + 0.02);
-    g.gain.exponentialRampToValueAtTime(0.0001, a.currentTime + 0.7);
-    o.start(); o.stop(a.currentTime + 0.75);
+    if (!AC) return;
+    if (!_audioCtx) _audioCtx = new AC();
+    if (_audioCtx.state === 'suspended') _audioCtx.resume();
   } catch (e) {}
+}
+document.addEventListener('touchstart', unlockAudio, { passive: true });
+document.addEventListener('click', unlockAudio);
+
+function playBeepBurst() {
+  try {
+    if (!_audioCtx) unlockAudio();
+    const a = _audioCtx;
+    if (!a || a.state !== 'running') return false;
+    [880, 880, 1175].forEach((f, i) => {
+      const o = a.createOscillator(), g = a.createGain();
+      o.connect(g); g.connect(a.destination); o.type = 'sine'; o.frequency.value = f;
+      const t0 = a.currentTime + i * 0.28;
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(0.4, t0 + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.24);
+      o.start(t0); o.stop(t0 + 0.26);
+    });
+    return true;
+  } catch (e) { return false; }
+}
+
+// Rings every 2s (sound + vibration + full-width banner) until dismissed, 60s max
+let _alarmInterval = null, _alarmUntil = 0;
+function startAlarm(label) {
+  clearInterval(_alarmInterval);
+  _alarmUntil = Date.now() + 60000;
+  const banner = document.getElementById('alarmBanner');
+  if (banner) {
+    document.getElementById('alarmBannerText').textContent = label;
+    banner.classList.add('on');
+  }
+  const ring = () => {
+    if (Date.now() > _alarmUntil) { stopAlarm(); return; }
+    playBeepBurst();
+    if (navigator.vibrate) navigator.vibrate([300, 120, 300]);
+  };
+  ring();
+  _alarmInterval = setInterval(ring, 2000);
+}
+function stopAlarm() {
+  clearInterval(_alarmInterval); _alarmInterval = null;
+  const banner = document.getElementById('alarmBanner');
+  if (banner) banner.classList.remove('on');
 }
 function toggleTimerPresets() {
   const el = document.getElementById('timerPresets');
@@ -4944,31 +5335,55 @@ function addCustomTimer() {
   const min = parseInt(el.value, 10);
   if (min > 0) { addCookTimer(min); el.value = ''; }
 }
+// One shared 500ms ticker drives every timer off absolute end times
+let _timerTicker = null;
+function ensureTimerTicker() {
+  if (_timerTicker) return;
+  _timerTicker = setInterval(tickTimers, 500);
+}
+function tickTimers() {
+  const now = Date.now();
+  let any = false;
+  _cookTimers.forEach(t => {
+    if (t.done) { any = true; return; }
+    any = true;
+    if (now >= t.endAt) { t.done = true; startAlarm('⏱ ' + t.label + ' timer is done!'); }
+  });
+  renderCookTimers();
+  // Per-step timer
+  if (_cook) {
+    Object.keys(_cook.timers).forEach(idx => {
+      any = true;
+      const t = _cook.timers[idx];
+      if (now >= t.endAt) {
+        delete _cook.timers[idx];
+        startAlarm('⏱ Step ' + (Number(idx) + 1) + ' timer is done!');
+        if (_cook.idx === Number(idx)) renderCookStep();
+      } else if (_cook.idx === Number(idx)) {
+        const btn = document.getElementById('cookTimerBtn');
+        if (btn) btn.innerHTML = '⏱ ' + fmtCountdown(Math.ceil((t.endAt - now) / 1000));
+      }
+    });
+  }
+  if (!any) { clearInterval(_timerTicker); _timerTicker = null; }
+}
 function addCookTimer(min, label) {
-  const t = { id: ++_timerSeq, label: label || (min + ' min'), remaining: min * 60 };
-  t.interval = setInterval(() => {
-    t.remaining--;
-    if (t.remaining <= 0) {
-      clearInterval(t.interval);
-      t.done = true;
-      cookBeep();
-      if (navigator.vibrate) navigator.vibrate([300, 120, 300, 120, 300]);
-      toast('⏱ ' + t.label + ' is done!');
-    }
-    renderCookTimers();
-  }, 1000);
+  unlockAudio(); // this runs inside the tap, so iOS lets the alarm play later
+  const t = { id: ++_timerSeq, label: label || (min + ' min'), endAt: Date.now() + min * 60000 };
   _cookTimers.push(t);
+  ensureTimerTicker();
   const presets = document.getElementById('timerPresets'); if (presets) presets.style.display = 'none';
   renderCookTimers();
 }
 function dismissCookTimer(id) {
   const i = _cookTimers.findIndex(t => t.id === id);
-  if (i > -1) { clearInterval(_cookTimers[i].interval); _cookTimers.splice(i, 1); renderCookTimers(); }
+  if (i > -1) { if (_cookTimers[i].done) stopAlarm(); _cookTimers.splice(i, 1); renderCookTimers(); }
 }
 function renderCookTimers() {
   const el = document.getElementById('cookTimers'); if (!el) return;
+  const now = Date.now();
   el.innerHTML = _cookTimers.map(t =>
-    `<button class="cook-chip ${t.done ? 'done' : ''}" onclick="dismissCookTimer(${t.id})">${t.done ? '✓' : '⏱'} ${esc(t.label)} ${t.done ? 'done' : fmtCountdown(Math.max(0, t.remaining))} <span style="opacity:.6;margin-left:4px;">✕</span></button>`
+    `<button class="cook-chip ${t.done ? 'done' : ''}" onclick="dismissCookTimer(${t.id})">${t.done ? '✓' : '⏱'} ${esc(t.label)} ${t.done ? 'done — tap to dismiss' : fmtCountdown(Math.max(0, Math.ceil((t.endAt - now) / 1000)))} <span style="opacity:.6;margin-left:4px;">✕</span></button>`
   ).join('');
 }
 
@@ -4987,11 +5402,12 @@ function renderCookStep() {
   const running = _cook.timers[idx];
   let html = `<div>${esc(stepText)}</div>`;
   if (timer || running) {
-    const t = running ? fmtCountdown(running.remaining) : timer.label;
-    html += `<div class="cook-timer ${running ? 'running' : ''}" id="cookTimerBtn" onclick="toggleCookTimer(${timer ? timer.seconds : 0})">⏱ ${esc(t)}${running ? '' : ' — tap to start'}</div>`;
+    const t = running ? fmtCountdown(Math.max(0, Math.ceil((running.endAt - Date.now()) / 1000))) : timer.label;
+    html += `<div class="cook-timer ${running ? 'running' : ''}" id="cookTimerBtn" onclick="toggleCookTimer(${timer ? timer.seconds : 0})">⏱ ${running ? esc(t) : 'Start ' + esc(t) + ' timer'}</div>`;
   }
   if (ingr.length) {
-    html += `<div class="cook-step-ingr"><strong>For this step:</strong><br>${ingr.map(i => esc((i.quantity ? i.quantity + ' ' : '') + i.name)).join('<br>')}</div>`;
+    const sc = _cook.scale || 1;
+    html += `<div class="cook-step-ingr"><strong>For this step:</strong><br>${ingr.map(i => esc((i.quantity ? scaleQty(i.quantity, sc) + ' ' : '') + i.name)).join('<br>')}</div>`;
   }
   // No saved steps? Offer to have Claude write them right here.
   if (!(recipe.notes || '').trim() && getProxyUrl()) {
@@ -5006,21 +5422,11 @@ function renderCookStep() {
 
 function toggleCookTimer(seconds) {
   if (!_cook) return;
+  unlockAudio(); // user gesture — unlock so the alarm can ring on the iPad
   const idx = _cook.idx;
-  if (_cook.timers[idx]) { clearInterval(_cook.timers[idx].interval); delete _cook.timers[idx]; renderCookStep(); return; }
-  const t = { remaining: seconds };
-  t.interval = setInterval(() => {
-    t.remaining--;
-    const btn = document.getElementById('cookTimerBtn');
-    if (_cook && _cook.idx === idx && btn) btn.innerHTML = '⏱ ' + fmtCountdown(Math.max(0, t.remaining));
-    if (t.remaining <= 0) {
-      clearInterval(t.interval); delete _cook.timers[idx];
-      toast('⏱ Timer done!');
-      if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
-      if (_cook && _cook.idx === idx) renderCookStep();
-    }
-  }, 1000);
-  _cook.timers[idx] = t;
+  if (_cook.timers[idx]) { delete _cook.timers[idx]; renderCookStep(); return; }
+  _cook.timers[idx] = { endAt: Date.now() + seconds * 1000 };
+  ensureTimerTicker();
   renderCookStep();
 }
 
@@ -5040,6 +5446,66 @@ function cookNext() {
   renderCookStep();
 }
 function cookPrev() { if (_cook && _cook.idx > 0) { _cook.idx--; renderCookStep(); } }
+
+// --- Voice control (cook mode) ---
+// "next" / "back" / "ingredients" / "read it" / "timer 5 minutes"
+let _voiceRec = null, _voiceOn = false;
+function voiceSupported() { return !!(window.SpeechRecognition || window.webkitSpeechRecognition); }
+function toggleCookVoice() {
+  if (!voiceSupported()) { toast('Voice control isn\'t supported in this browser'); return; }
+  _voiceOn ? stopCookVoice() : startCookVoice();
+}
+function startCookVoice() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  try {
+    _voiceRec = new SR();
+    _voiceRec.continuous = true;
+    _voiceRec.interimResults = false;
+    _voiceRec.lang = 'en-US';
+    _voiceRec.onresult = e => {
+      const txt = (e.results[e.results.length - 1][0].transcript || '').toLowerCase();
+      handleVoiceCommand(txt);
+    };
+    // Recognition sessions end on their own — restart while voice mode is on
+    _voiceRec.onend = () => { if (_voiceOn && _cook) { try { _voiceRec.start(); } catch (err) {} } };
+    _voiceRec.onerror = e => {
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { stopCookVoice(); toast('Microphone permission denied'); }
+    };
+    _voiceRec.start();
+    _voiceOn = true;
+    updateVoiceBtn();
+    toast('🎤 Listening — say "next", "back", "ingredients", or "timer 5 minutes"');
+  } catch (e) { _voiceOn = false; toast('Could not start the microphone'); }
+}
+function stopCookVoice() {
+  _voiceOn = false;
+  try { if (_voiceRec) { _voiceRec.onend = null; _voiceRec.stop(); } } catch (e) {}
+  _voiceRec = null;
+  updateVoiceBtn();
+}
+function updateVoiceBtn() {
+  const b = document.getElementById('cookVoiceBtn');
+  if (b) { b.classList.toggle('listening', _voiceOn); b.textContent = _voiceOn ? '🎤 On' : '🎤'; }
+}
+function handleVoiceCommand(txt) {
+  if (!_cook) return;
+  const timerMatch = txt.match(/timer\D*(\d+)\s*(?:minute|min)/) || txt.match(/(\d+)\s*(?:minute|min)\D*timer/);
+  if (timerMatch) { addCookTimer(parseInt(timerMatch[1], 10)); toast('⏱ ' + timerMatch[1] + ' min timer started'); return; }
+  if (/\b(next|forward)\b/.test(txt)) { cookNext(); if (_voiceOn && _cook) speakCurrentStep(); }
+  else if (/\b(back|previous)\b/.test(txt)) { cookPrev(); if (_voiceOn) speakCurrentStep(); }
+  else if (/\bingredient/.test(txt)) { const ov = document.getElementById('cookIngrOverlay'); toggleCookIngredients(!ov.classList.contains('open')); }
+  else if (/\b(read|repeat|again)\b/.test(txt)) speakCurrentStep();
+  else if (/\bstop alarm\b|\bdismiss\b/.test(txt)) stopAlarm();
+}
+function speakCurrentStep() {
+  if (!_cook || !('speechSynthesis' in window)) return;
+  try {
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance('Step ' + (_cook.idx + 1) + '. ' + _cook.steps[_cook.idx]);
+    u.rate = 0.95;
+    speechSynthesis.speak(u);
+  } catch (e) {}
+}
 
 // Swipe navigation — works with a knuckle when hands are messy
 (function() {
@@ -5995,6 +6461,7 @@ if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch
 if(familyCode) {
   startListening();
   showApp();
+  setTimeout(backupIfNeeded, 12000); // after the first snapshot has landed
 } else {
   showSetup();
 }
