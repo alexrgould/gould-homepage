@@ -282,6 +282,30 @@ h3 { font-size: 13px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
 #cookMode .cook-nav button { flex: 1; padding: 16px; font-size: 16px; font-weight: 600; border-radius: 12px; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
 #cookMode .cook-nav button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
 
+/* --- Cook Mode ingredients: pinned panel on wide screens, overlay on phones --- */
+#cookMode .cook-body { flex: 1; display: flex; min-height: 0; }
+#cookIngrPanel { display: none; }
+#cookIngrPanel h3 { font-family: var(--serif); font-size: 18px; font-weight: 600; margin-bottom: 2px; }
+.cook-ingr-sub { font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; }
+.cook-ingr-list { flex: 1; overflow-y: auto; }
+.cook-ingr-item { display: flex; align-items: center; gap: 10px; padding: 10px 4px; border-bottom: 1px solid var(--border); font-size: 15px; cursor: pointer; user-select: none; -webkit-user-select: none; }
+.cook-ingr-item:last-child { border-bottom: none; }
+.cook-ingr-item .ci-box { width: 20px; height: 20px; border-radius: 6px; border: 2px solid var(--border); flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 12px; color: #fff; }
+.cook-ingr-item.checked .ci-box { background: var(--green); border-color: var(--green); }
+.cook-ingr-item.checked .ci-txt { text-decoration: line-through; color: var(--text-secondary); }
+.cook-ingr-item .ci-qty { font-weight: 600; margin-right: 3px; }
+.cook-ingr-item.instep { background: var(--accent-light); border-radius: 8px; margin: 0 -6px; padding: 10px 10px; border-bottom-color: transparent; }
+#cookIngrOverlay { position: absolute; inset: 0; background: var(--bg); z-index: 12; display: flex; flex-direction: column; padding: max(env(safe-area-inset-top), 16px) 20px max(env(safe-area-inset-bottom), 16px); transform: translateY(102%); transition: transform .28s cubic-bezier(.32,.72,.35,1); }
+#cookIngrOverlay.open { transform: translateY(0); }
+#cookIngrOverlay h3 { font-family: var(--serif); font-size: 22px; font-weight: 600; }
+#cookIngrOverlay .cook-ingr-item { font-size: 17px; padding: 12px 4px; }
+.cook-ingr-ov-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+.cook-ingr-back { margin-top: 12px; padding: 15px; font-size: 16px; font-weight: 600; border-radius: 12px; border: none; background: var(--accent); color: #fff; flex-shrink: 0; }
+@media (min-width: 700px) {
+  #cookIngrPanel { display: flex; flex-direction: column; flex: 0 0 300px; margin-left: 20px; padding-left: 20px; border-left: 1px solid var(--border); min-height: 0; }
+  #cookIngrBtn { display: none !important; }
+}
+
 /* --- Motion & delight --- */
 @keyframes cardIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
 #view-home.active > * { animation: cardIn .45s cubic-bezier(.22,1,.36,1) backwards; }
@@ -516,6 +540,7 @@ nav button.active svg { animation: tabSpring .4s cubic-bezier(.34,1.56,.64,1); }
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
       <input type="text" placeholder="Search recipes..." id="recipeSearch" oninput="renderRecipes()">
     </div>
+    <div id="stepsBanner"></div>
     <div id="recipeList"></div>
     <div id="recipeDiscover"></div>
   </div>
@@ -652,10 +677,13 @@ nav button.active svg { animation: tabSpring .4s cubic-bezier(.34,1.56,.64,1); }
 
     <div class="card" style="margin-bottom:16px;">
       <h3 style="margin-bottom:4px;">Smart Appliances <span style="font-size:11px;font-weight:600;color:var(--purple);background:var(--purple-light);padding:2px 8px;border-radius:999px;vertical-align:middle;">BETA</span></h3>
-      <p style="font-size:13px; color:var(--text-secondary); margin-bottom:10px;">Control your Anova Precision Oven and Precision Cooker. Get a Personal Access Token from the Anova Oven app → More → Developer → Personal Access Tokens (starts with <code>anova-</code>). Commands follow Anova's official API; live status is calibrated on first connect.</p>
+      <p style="font-size:13px; color:var(--text-secondary); margin-bottom:10px;">Control your Anova Precision Oven and Precision Cooker. Recommended: deploy <code>anova-proxy-worker.js</code> to Cloudflare with your token as the <code>ANOVA_PAT</code> secret, then paste the Worker URL below — the token never touches the browser. Or paste a Personal Access Token directly (Anova Oven app → More → Developer) as a fallback.</p>
       <div style="display:flex; gap:6px; margin-bottom:8px;">
-        <input type="text" id="anovaPat" placeholder="anova-… (leave empty if hardcoded)" style="flex:1; padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-size:13px;">
+        <input type="text" id="anovaProxyUrl" placeholder="Worker URL, e.g. wss://anova-proxy.you.workers.dev" style="flex:1; padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-size:13px;">
         <button class="btn btn-secondary btn-sm" onclick="saveAnovaPat()">Save</button>
+      </div>
+      <div style="display:flex; gap:6px; margin-bottom:8px;">
+        <input type="text" id="anovaPat" placeholder="anova-… token (only if not using the Worker)" style="flex:1; padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-size:13px;" onchange="saveAnovaPat()">
       </div>
       <div id="anovaStatus" style="font-size:12px;color:var(--text-secondary);margin-bottom:8px;"></div>
       <button class="btn btn-secondary" style="width:100%;" onclick="openAnovaModal()">🔥 Open Appliance Controls</button>
@@ -770,7 +798,7 @@ nav button.active svg { animation: tabSpring .4s cubic-bezier(.34,1.56,.64,1); }
             <select id="claudeModel_mealplan" class="claude-model-select" onchange="saveClaudeSettings()">
               <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
               <option value="claude-sonnet-4-5-20241022">Sonnet 4.5</option>
-              <option value="claude-sonnet-4-6" selected>Sonnet 4.6</option>
+              <option value="claude-sonnet-5" selected>Sonnet 5</option>
               <option value="claude-opus-4-6">Opus 4.6</option>
             </select>
           </div>
@@ -779,7 +807,7 @@ nav button.active svg { animation: tabSpring .4s cubic-bezier(.34,1.56,.64,1); }
             <select id="claudeModel_recipechat" class="claude-model-select" onchange="saveClaudeSettings()">
               <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
               <option value="claude-sonnet-4-5-20241022">Sonnet 4.5</option>
-              <option value="claude-sonnet-4-6" selected>Sonnet 4.6</option>
+              <option value="claude-sonnet-5" selected>Sonnet 5</option>
               <option value="claude-opus-4-6">Opus 4.6</option>
             </select>
           </div>
@@ -788,7 +816,7 @@ nav button.active svg { animation: tabSpring .4s cubic-bezier(.34,1.56,.64,1); }
             <select id="claudeModel_substitutions" class="claude-model-select" onchange="saveClaudeSettings()">
               <option value="claude-haiku-4-5-20251001" selected>Haiku 4.5</option>
               <option value="claude-sonnet-4-5-20241022">Sonnet 4.5</option>
-              <option value="claude-sonnet-4-6">Sonnet 4.6</option>
+              <option value="claude-sonnet-5">Sonnet 5</option>
               <option value="claude-opus-4-6">Opus 4.6</option>
             </select>
           </div>
@@ -797,7 +825,7 @@ nav button.active svg { animation: tabSpring .4s cubic-bezier(.34,1.56,.64,1); }
             <select id="claudeModel_calendar" class="claude-model-select" onchange="saveClaudeSettings()">
               <option value="claude-haiku-4-5-20251001" selected>Haiku 4.5</option>
               <option value="claude-sonnet-4-5-20241022">Sonnet 4.5</option>
-              <option value="claude-sonnet-4-6">Sonnet 4.6</option>
+              <option value="claude-sonnet-5">Sonnet 5</option>
               <option value="claude-opus-4-6">Opus 4.6</option>
             </select>
           </div>
@@ -806,7 +834,7 @@ nav button.active svg { animation: tabSpring .4s cubic-bezier(.34,1.56,.64,1); }
             <select id="claudeModel_tips" class="claude-model-select" onchange="saveClaudeSettings()">
               <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
               <option value="claude-sonnet-4-5-20241022">Sonnet 4.5</option>
-              <option value="claude-sonnet-4-6" selected>Sonnet 4.6</option>
+              <option value="claude-sonnet-5" selected>Sonnet 5</option>
               <option value="claude-opus-4-6">Opus 4.6</option>
             </select>
           </div>
@@ -815,7 +843,16 @@ nav button.active svg { animation: tabSpring .4s cubic-bezier(.34,1.56,.64,1); }
             <select id="claudeModel_parentchat" class="claude-model-select" onchange="saveClaudeSettings()">
               <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
               <option value="claude-sonnet-4-5-20241022">Sonnet 4.5</option>
-              <option value="claude-sonnet-4-6" selected>Sonnet 4.6</option>
+              <option value="claude-sonnet-5" selected>Sonnet 5</option>
+              <option value="claude-opus-4-6">Opus 4.6</option>
+            </select>
+          </div>
+          <div>
+            <label style="color:var(--text-secondary);display:block;margin-bottom:2px;">Recipe Steps</label>
+            <select id="claudeModel_steps" class="claude-model-select" onchange="saveClaudeSettings()">
+              <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
+              <option value="claude-sonnet-4-5-20241022">Sonnet 4.5</option>
+              <option value="claude-sonnet-5" selected>Sonnet 5</option>
               <option value="claude-opus-4-6">Opus 4.6</option>
             </select>
           </div>
@@ -915,10 +952,20 @@ nav button.active svg { animation: tabSpring .4s cubic-bezier(.34,1.56,.64,1); }
 <div id="cookMode">
   <div class="cook-header">
     <div class="cook-title" id="cookTitle"></div>
-    <button style="background:none;border:none;font-size:26px;color:var(--text-secondary);padding:4px 8px;" onclick="closeCookMode()">&times;</button>
+    <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+      <button class="cook-add-btn" id="cookIngrBtn" onclick="toggleCookIngredients(true)">🧾 Ingredients</button>
+      <button style="background:none;border:none;font-size:26px;color:var(--text-secondary);padding:4px 8px;" onclick="closeCookMode()">&times;</button>
+    </div>
   </div>
   <div class="cook-progress" id="cookProgress"></div>
-  <div class="cook-step" id="cookStep"></div>
+  <div class="cook-body">
+    <div class="cook-step" id="cookStep"></div>
+    <div id="cookIngrPanel">
+      <h3>Ingredients</h3>
+      <div class="cook-ingr-sub">Tap to check off · highlighted = this step</div>
+      <div class="cook-ingr-list" id="cookIngrListPanel"></div>
+    </div>
+  </div>
   <div class="cook-timers-bar">
     <div class="cook-timers" id="cookTimers"></div>
     <div class="cook-timer-add">
@@ -938,6 +985,15 @@ nav button.active svg { animation: tabSpring .4s cubic-bezier(.34,1.56,.64,1); }
   <div class="cook-nav">
     <button id="cookPrevBtn" onclick="cookPrev()">&larr; Back</button>
     <button id="cookNextBtn" class="primary" onclick="cookNext()">Next &rarr;</button>
+  </div>
+  <div id="cookIngrOverlay">
+    <div class="cook-ingr-ov-head">
+      <h3>Ingredients</h3>
+      <button style="background:none;border:none;font-size:26px;color:var(--text-secondary);padding:4px 8px;" onclick="toggleCookIngredients(false)">&times;</button>
+    </div>
+    <div class="cook-ingr-sub">Tap to check off as you gather</div>
+    <div class="cook-ingr-list" id="cookIngrListOverlay"></div>
+    <button class="cook-ingr-back" id="cookIngrBackBtn" onclick="toggleCookIngredients(false)">&larr; Back to steps</button>
   </div>
 </div>
 
@@ -2581,6 +2637,7 @@ function toggleCuisineGroup(cuisine) {
 }
 
 function renderRecipes() {
+  renderStepsBanner();
   const q = (document.getElementById('recipeSearch').value||'').toLowerCase();
   const list = data.recipes.filter(r => !q || r.name.toLowerCase().includes(q));
   const el = document.getElementById('recipeList');
@@ -2707,7 +2764,13 @@ function showRecipeDetail(id) {
     });
     html += '</ul>';
   }
-  if (r.notes) { html += '<h3 style="margin-bottom:8px;">Notes</h3>'; html += `<p style="font-size:15px;white-space:pre-wrap;color:var(--text-secondary);">${esc(r.notes)}</p>`; }
+  if (r.notes) {
+    html += `<h3 style="margin-bottom:8px;">Steps${r.stepsAI ? ' <span style="font-size:11px;font-weight:600;color:var(--accent);background:var(--accent-light);padding:1px 6px;border-radius:4px;vertical-align:middle;">✨ AI-written</span>' : ''}</h3>`;
+    html += `<p style="font-size:15px;white-space:pre-wrap;color:var(--text-secondary);">${esc(r.notes)}</p>`;
+  } else if (getProxyUrl()) {
+    html += `<button class="btn btn-secondary" style="width:100%;margin-bottom:6px;" onclick="generateRecipeSteps('${r.id}', this)">✨ Write steps with AI</button>`;
+    html += `<p style="font-size:12px;color:var(--text-secondary);margin-bottom:8px;">No steps yet — Claude writes them from the ingredient list. They power Cook Mode and sync to every device.</p>`;
+  }
 
   // Ratings
   const avgRating = getAverageRating(r.id);
@@ -2959,7 +3022,7 @@ function saveRecipe() {
   const cuisine = document.getElementById('recipeCuisine').value;
   const cookMinutes = parseInt(document.getElementById('recipeCookMin').value, 10) || 0;
   const appliance = document.getElementById('recipeAppliance').value || 'auto';
-  if (editId) { const r = data.recipes.find(x=>x.id===editId); if(r){r.name=name;r.ingredients=ingredients;r.notes=notes;r.url=url;r.cuisine=cuisine;r.cookMinutes=cookMinutes;r.appliance=appliance;} }
+  if (editId) { const r = data.recipes.find(x=>x.id===editId); if(r){if(r.notes!==notes)r.stepsAI=false;r.name=name;r.ingredients=ingredients;r.notes=notes;r.url=url;r.cuisine=cuisine;r.cookMinutes=cookMinutes;r.appliance=appliance;} }
   else data.recipes.push({id:uid(),name,ingredients,notes,url,cuisine,cookMinutes,appliance});
   persist(); closeRecipeModal(); renderRecipes();
   toast(editId?'Updated':'Recipe added');
@@ -2993,9 +3056,22 @@ function saveNutritionKey() {
 // A value saved in Settings still overrides this.
 const DEFAULT_PROXY_URL = 'https://claude-proxy.alex-r-gould.workers.dev';
 function getProxyUrl() { return localStorage.getItem('claude_proxy_url') || DEFAULT_PROXY_URL; }
-// Anova personal access token — hardcode here (like the proxy) so it survives storage wipes.
-const DEFAULT_ANOVA_PAT = 'anova-eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOiJkbWx3TTZGNzV0T2pYYUpCblBQTDhRdGtqSncxIiwiY3JlYXRlZEF0IjoxNzgxODYyNDc1Mjk0fQ.OUI-hlM8nZKUVXv3Cw5eLwXxU_1f97s_cnZ16Eb-GvY';
-function getAnovaPat() { return (localStorage.getItem('anova_pat') || DEFAULT_ANOVA_PAT || '').trim(); }
+// Anova connection — the Personal Access Token now lives as a secret on a
+// Cloudflare Worker (anova-proxy-worker.js), so no token ships in this file.
+// Hardcode your Worker URL here (like the Claude proxy) so it survives
+// storage wipes; a value saved in Settings still overrides it.
+const DEFAULT_ANOVA_PROXY = 'wss://anovaoven.alex-r-gould.workers.dev';
+function normalizeAnovaProxy(url) {
+  if (!url) return '';
+  url = url.trim().replace(/\/+$/, '');
+  // Accept https://, wss://, or bare hostname — always connect with wss://
+  url = url.replace(/^(https?:\/\/|wss?:\/\/)+/i, '');
+  return url ? 'wss://' + url : '';
+}
+function getAnovaProxy() { return normalizeAnovaProxy(localStorage.getItem('anova_proxy_url') || DEFAULT_ANOVA_PROXY); }
+// Direct-token fallback for anyone not using the proxy. Never hardcode a PAT here.
+function getAnovaPat() { return (localStorage.getItem('anova_pat') || '').trim(); }
+function anovaConfigured() { return !!(getAnovaProxy() || getAnovaPat()); }
 // Sonos OAuth client id (public; the secret lives on the Worker). Hardcode here once you have it.
 const DEFAULT_SONOS_CLIENT_ID = '1acc19d7-1e49-482d-a3e0-06da4e240dcf';
 function getSonosClientId() { return (localStorage.getItem('sonos_client_id') || DEFAULT_SONOS_CLIENT_ID || '').trim(); }
@@ -3012,18 +3088,22 @@ Core principles:
 Tone: Warm, non-judgmental, practical. Avoid fear-based or shame-based framing. When in doubt, default to connection.`;
 function getPhilosophy() { return localStorage.getItem('parenting_philosophy') || DEFAULT_PHILOSOPHY; }
 
-const CLAUDE_FEATURES = ['mealplan','recipechat','substitutions','calendar','tips','parentchat'];
+const CLAUDE_FEATURES = ['mealplan','recipechat','substitutions','calendar','tips','parentchat','steps'];
 const CLAUDE_MODEL_DEFAULTS = {
-  mealplan: 'claude-sonnet-4-6',
-  recipechat: 'claude-sonnet-4-6',
+  mealplan: 'claude-sonnet-5',
+  recipechat: 'claude-sonnet-5',
   substitutions: 'claude-haiku-4-5-20251001',
   calendar: 'claude-haiku-4-5-20251001',
-  tips: 'claude-sonnet-4-6',
-  parentchat: 'claude-sonnet-4-6',
+  tips: 'claude-sonnet-5',
+  parentchat: 'claude-sonnet-5',
+  steps: 'claude-sonnet-5',
 };
 
 function getModelForFeature(feature) {
-  return localStorage.getItem('claude_model_' + feature) || CLAUDE_MODEL_DEFAULTS[feature] || 'claude-haiku-4-5-20251001';
+  let m = localStorage.getItem('claude_model_' + feature);
+  // Migrate previously saved Sonnet 4.6 choices to Sonnet 5
+  if (m === 'claude-sonnet-4-6') { m = 'claude-sonnet-5'; localStorage.setItem('claude_model_' + feature, m); }
+  return m || CLAUDE_MODEL_DEFAULTS[feature] || 'claude-haiku-4-5-20251001';
 }
 
 function normalizeProxyUrl(url) {
@@ -3412,6 +3492,120 @@ function applySubstitution(newIngredientName) {
   // Re-render the recipe detail to show updated ingredient
   if (currentDetailId) showRecipeDetail(currentDetailId);
   toast(`Swapped "${oldName}" → "${newIngredientName}"`);
+}
+
+// --- AI RECIPE STEPS ---
+// Writes cook-mode steps for recipes that don't have any, using the recipe's
+// own ingredient list. Steps land in r.notes, so persist() syncs them to
+// Firebase and every device picks them up automatically.
+function recipesMissingSteps() {
+  return data.recipes.filter(r => !(r.notes || '').trim());
+}
+
+function buildStepsPrompt(r) {
+  const ing = (r.ingredients || []).map(i => '- ' + (i.quantity ? i.quantity + ' ' : '') + i.name).join('\n');
+  return `Write step-by-step cooking instructions for this family dinner recipe.
+
+Recipe: ${r.name}${r.cuisine ? ' (' + r.cuisine + ' cuisine)' : ''}
+${r.cookMinutes ? 'Target total time: about ' + r.cookMinutes + ' minutes.' : ''}
+Ingredients:
+${ing || '(no ingredient list saved — write a standard version of this dish)'}
+
+Rules:
+- 5 to 10 steps, each a single action a busy home cook can read at a glance from across the kitchen
+- Keep each step under 25 words
+- Include specific times and temperatures ("5-6 minutes", "400°F") — the app turns these into tap-to-start timers
+- Use only the listed ingredients plus pantry basics (salt, pepper, oil, water, butter)
+- Include quantities where they help ("add 3 tbsp soy sauce")
+- No step numbers, no headers, no commentary
+
+Reply ONLY as JSON: {"steps":["first step","second step"]}`;
+}
+
+async function generateStepsForRecipe(r) {
+  const reply = await callClaude(buildStepsPrompt(r), {
+    feature: 'steps',
+    system: 'You are a practical home-cooking assistant writing concise recipe steps for a family app. Reply with ONLY valid JSON.',
+    maxTokens: 900,
+  });
+  const cleaned = reply.trim().replace(/```json\n?/g, '').replace(/```/g, '').trim();
+  let parsed;
+  try { parsed = JSON.parse(cleaned); } catch (e) { throw new Error('Could not parse steps for ' + r.name); }
+  const arr = Array.isArray(parsed) ? parsed : (parsed && Array.isArray(parsed.steps) ? parsed.steps : []);
+  const steps = arr.filter(s => typeof s === 'string' && s.trim())
+    .map(s => s.trim().replace(/^(step\s*)?\d+[\.\):]\s*/i, ''));
+  if (steps.length < 2) throw new Error('No usable steps returned for ' + r.name);
+  // Re-find by id at write time — a Firestore snapshot mid-batch can replace
+  // the recipes array, and we don't want to write steps onto a stale object
+  const live = data.recipes.find(x => x.id === r.id) || r;
+  live.notes = steps.join('\n');
+  live.stepsAI = true; // flag so you know these were AI-written, not yours
+  persist();
+  return steps;
+}
+
+// Per-recipe button (recipe detail + cook mode)
+async function generateRecipeSteps(id, btn) {
+  const r = data.recipes.find(x => x.id === id); if (!r) return;
+  if (!getProxyUrl()) { toast('Set up Claude AI in Settings first'); return; }
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Writing steps…'; }
+  try {
+    await generateStepsForRecipe(r);
+    toast('✨ Steps written for ' + r.name);
+    if (currentDetailId === id && document.getElementById('recipeDetailModal').classList.contains('open')) showRecipeDetail(id);
+    if (_cook && _cook.recipe.id === id) { _cook.steps = parseCookSteps(r); _cook.idx = 0; renderCookStep(); }
+    renderStepsBanner();
+  } catch (e) {
+    toast('⚠️ ' + e.message);
+    if (btn) { btn.disabled = false; btn.textContent = '✨ Write steps with AI'; }
+  }
+}
+
+// Batch: write steps for every recipe that has none, a few at a time
+let _stepsBatch = null; // { done, total } while running
+async function generateAllMissingSteps() {
+  if (_stepsBatch) return;
+  if (!getProxyUrl()) { toast('Set up Claude AI in Settings first'); showView('sync'); return; }
+  const missing = recipesMissingSteps();
+  if (!missing.length) { toast('Every recipe already has steps!'); return; }
+  if (!confirm('Have Claude write steps for ' + missing.length + ' recipe' + (missing.length !== 1 ? 's' : '') + '? They sync to all devices, and you can edit any recipe to tweak them.')) return;
+  _stepsBatch = { done: 0, total: missing.length };
+  renderStepsBanner();
+  const queue = [...missing];
+  const failed = [];
+  const worker = async () => {
+    while (queue.length && _stepsBatch) {
+      const r = queue.shift();
+      try { await generateStepsForRecipe(r); }
+      catch (e) { failed.push(r.name); console.log('Steps failed for', r.name, e); }
+      if (_stepsBatch) { _stepsBatch.done++; renderStepsBanner(); }
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);
+  _stepsBatch = null;
+  renderRecipes();
+  toast(failed.length
+    ? 'Steps written for ' + (missing.length - failed.length) + ' recipes — ' + failed.length + ' failed, tap ✨ Write all to retry those'
+    : '✨ Steps written for all ' + missing.length + ' recipes!');
+}
+
+function renderStepsBanner() {
+  const el = document.getElementById('stepsBanner'); if (!el) return;
+  if (_stepsBatch) {
+    const pct = Math.round(_stepsBatch.done / _stepsBatch.total * 100);
+    el.innerHTML = `<div class="card" style="margin-bottom:12px;">
+      <div class="card-title">✨ Writing steps… ${_stepsBatch.done}/${_stepsBatch.total}</div>
+      <div style="height:6px;border-radius:3px;background:var(--accent-light);margin:8px 0 4px;overflow:hidden;"><div style="height:100%;width:${pct}%;background:var(--accent);border-radius:3px;transition:width .3s;"></div></div>
+      <div class="card-sub">Keep the app open — each recipe syncs to every device as it finishes.</div>
+    </div>`;
+    return;
+  }
+  const missing = recipesMissingSteps();
+  if (!missing.length || !getProxyUrl()) { el.innerHTML = ''; return; }
+  el.innerHTML = `<div class="card" style="margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;gap:10px;">
+    <div style="flex:1;"><div class="card-title">${missing.length} recipe${missing.length !== 1 ? 's' : ''} without steps</div><div class="card-sub">Have Claude write Cook Mode steps from each ingredient list.</div></div>
+    <button class="btn btn-primary btn-sm" style="flex-shrink:0;" onclick="generateAllMissingSteps()">✨ Write all</button>
+  </div>`;
 }
 
 // --- CLAUDE CALENDAR SUMMARIES ---
@@ -4634,14 +4828,16 @@ function parseCookSteps(r) {
   return steps;
 }
 
+function _ingMatchesStep(ing, lowerStep) {
+  if (!ing.name) return false;
+  // Match on the longest word of the ingredient name (skips "of", "fresh", sizes)
+  const words = ing.name.toLowerCase().split(/[^a-z]+/).filter(w => w.length > 3);
+  return words.some(w => lowerStep.includes(w));
+}
+
 function stepIngredients(r, stepText) {
   const lower = stepText.toLowerCase();
-  return (r.ingredients || []).filter(ing => {
-    if (!ing.name) return false;
-    // Match on the longest word of the ingredient name (skips "of", "fresh", sizes)
-    const words = ing.name.toLowerCase().split(/[^a-z]+/).filter(w => w.length > 3);
-    return words.some(w => lower.includes(w));
-  });
+  return (r.ingredients || []).filter(ing => _ingMatchesStep(ing, lower));
 }
 
 function detectTimer(stepText) {
@@ -4664,13 +4860,52 @@ document.addEventListener('visibilitychange', () => {
 
 function openCookMode(recipeId) {
   const r = data.recipes.find(x => x.id === recipeId); if (!r) return;
-  _cook = { recipe: r, steps: parseCookSteps(r), idx: 0, timers: {} };
+  _cook = { recipe: r, steps: parseCookSteps(r), idx: 0, timers: {}, ingrChecked: {} };
   document.getElementById('cookTitle').textContent = r.name;
   document.getElementById('cookMode').classList.add('open');
+  document.getElementById('cookIngrOverlay').classList.remove('open');
   acquireCookWakeLock();
   renderCookStep();
   renderCookTimers();
   const presets = document.getElementById('timerPresets'); if (presets) presets.style.display = 'none';
+}
+
+// --- Cook mode ingredients (pinned panel on wide screens, overlay on phones) ---
+function renderCookIngredients() {
+  if (!_cook) return;
+  const { recipe, steps, idx } = _cook;
+  const ings = recipe.ingredients || [];
+  const btn = document.getElementById('cookIngrBtn');
+  const panel = document.getElementById('cookIngrPanel');
+  if (!ings.length) {
+    if (btn) btn.style.display = 'none';
+    if (panel) panel.style.display = 'none';
+    return;
+  }
+  if (btn) btn.style.display = '';
+  if (panel) panel.style.display = '';
+  const lower = (steps[idx] || '').toLowerCase();
+  const html = ings.map((ing, i) => {
+    const inStep = _ingMatchesStep(ing, lower);
+    const checked = _cook.ingrChecked[i];
+    return `<div class="cook-ingr-item ${checked ? 'checked' : ''}${inStep ? ' instep' : ''}" onclick="toggleCookIngredient(${i})">
+      <span class="ci-box">${checked ? '✓' : ''}</span>
+      <span class="ci-txt">${ing.quantity ? '<span class="ci-qty">' + esc(ing.quantity) + '</span>' : ''}${esc(ing.name)}</span>
+    </div>`;
+  }).join('');
+  const p = document.getElementById('cookIngrListPanel'); if (p) p.innerHTML = html;
+  const o = document.getElementById('cookIngrListOverlay'); if (o) o.innerHTML = html;
+  const back = document.getElementById('cookIngrBackBtn'); if (back) back.textContent = '← Back to step ' + (idx + 1);
+}
+
+function toggleCookIngredient(i) {
+  if (!_cook) return;
+  _cook.ingrChecked[i] = !_cook.ingrChecked[i];
+  renderCookIngredients();
+}
+
+function toggleCookIngredients(open) {
+  document.getElementById('cookIngrOverlay').classList.toggle('open', open);
 }
 
 function closeCookMode() {
@@ -4679,6 +4914,7 @@ function closeCookMode() {
   _cookTimers.forEach(t => clearInterval(t.interval));
   _cookTimers = [];
   document.getElementById('cookMode').classList.remove('open');
+  document.getElementById('cookIngrOverlay').classList.remove('open');
   const fridgeOpen = document.getElementById('fridgeMode').classList.contains('open');
   // Keep the screen awake if we dropped back into the kitchen display
   if (_cookWakeLock && !fridgeOpen) { _cookWakeLock.release().catch(()=>{}); _cookWakeLock = null; }
@@ -4757,10 +4993,15 @@ function renderCookStep() {
   if (ingr.length) {
     html += `<div class="cook-step-ingr"><strong>For this step:</strong><br>${ingr.map(i => esc((i.quantity ? i.quantity + ' ' : '') + i.name)).join('<br>')}</div>`;
   }
+  // No saved steps? Offer to have Claude write them right here.
+  if (!(recipe.notes || '').trim() && getProxyUrl()) {
+    html += `<button class="btn btn-primary" style="margin-top:18px;align-self:flex-start;font-size:16px;padding:12px 20px;" onclick="generateRecipeSteps('${recipe.id}', this)">✨ Write steps with AI</button>`;
+  }
   document.getElementById('cookStep').innerHTML = html;
   document.getElementById('cookPrevBtn').style.visibility = idx === 0 ? 'hidden' : 'visible';
   const nextBtn = document.getElementById('cookNextBtn');
   nextBtn.textContent = idx === steps.length - 1 ? '✓ Done' : 'Next →';
+  renderCookIngredients();
 }
 
 function toggleCookTimer(seconds) {
@@ -5326,27 +5567,45 @@ function fToC(f) { return Math.round(((f - 32) * 5 / 9) * 100) / 100; }
 function cToF(c) { return Math.round(c * 9 / 5 + 32); }
 
 function saveAnovaPat() {
+  const proxyEl = document.getElementById('anovaProxyUrl');
+  const proxy = normalizeAnovaProxy(proxyEl ? proxyEl.value : '');
+  if (proxyEl) proxyEl.value = proxy; // show the corrected wss:// URL
+  if (proxy) localStorage.setItem('anova_proxy_url', proxy); else localStorage.removeItem('anova_proxy_url');
   const v = document.getElementById('anovaPat').value.trim();
   if (v) localStorage.setItem('anova_pat', v); else localStorage.removeItem('anova_pat');
-  toast('Anova token saved');
-  anovaConnect();
+  toast('Anova settings saved');
+  if (anovaConfigured()) anovaConnect();
 }
-function loadAnovaPat() { const el = document.getElementById('anovaPat'); if (el) el.value = getAnovaPat(); setAnovaStatus(getAnovaPat() ? 'Token set. Open controls to connect.' : 'No token yet.'); }
+function loadAnovaPat() {
+  const pEl = document.getElementById('anovaProxyUrl'); if (pEl) pEl.value = getAnovaProxy();
+  const el = document.getElementById('anovaPat'); if (el) el.value = getAnovaPat();
+  setAnovaStatus(getAnovaProxy() ? 'Worker proxy set. Open controls to connect.' : (getAnovaPat() ? 'Direct token set — consider the Worker proxy instead. Open controls to connect.' : 'No Worker URL or token yet.'));
+}
 
 function anovaConnect() {
+  const proxy = getAnovaProxy();
   const pat = getAnovaPat();
-  if (!pat) { setAnovaStatus('No token yet — paste your anova- token above.'); return; }
-  if (!pat.startsWith('anova-')) { setAnovaStatus('Token should start with "anova-".'); return; }
+  let url;
+  if (proxy) {
+    // Worker proxy injects the token server-side — nothing secret in this URL
+    url = proxy;
+  } else if (pat) {
+    if (!pat.startsWith('anova-')) { setAnovaStatus('Token should start with "anova-".'); return; }
+    url = 'wss://devices.anovaculinary.io?token=' + encodeURIComponent(pat) + '&supportedAccessories=APC,APO';
+  } else {
+    setAnovaStatus('No Worker URL or token yet — see Settings → Smart Appliances.');
+    return;
+  }
   _anovaWant = true;
   try { if (_anovaWS) _anovaWS.close(); } catch (e) {}
   setAnovaStatus('Connecting…');
   let ws;
-  try { ws = new WebSocket('wss://devices.anovaculinary.io?token=' + encodeURIComponent(pat) + '&supportedAccessories=APC,APO'); }
+  try { ws = new WebSocket(url); }
   catch (e) { setAnovaStatus('Could not open connection.'); return; }
   _anovaWS = ws;
   ws.onopen = () => setAnovaStatus('Connected — discovering devices…');
   ws.onmessage = (e) => handleAnovaMessage(e.data);
-  ws.onerror = () => setAnovaStatus('Connection error — check the token and that devices are online.');
+  ws.onerror = () => setAnovaStatus(proxy ? 'Connection error — check the Worker URL and that devices are online.' : 'Connection error — check the token and that devices are online.');
   ws.onclose = () => { setAnovaStatus('Disconnected.'); if (_anovaWant) { clearTimeout(_anovaReconnectT); _anovaReconnectT = setTimeout(anovaConnect, 8000); } };
 }
 function anovaDisconnect() { _anovaWant = false; clearTimeout(_anovaReconnectT); try { if (_anovaWS) _anovaWS.close(); } catch (e) {} }
@@ -5531,7 +5790,7 @@ function toggleAnovaRaw() { const el = document.getElementById('anovaRawLog'); e
 function openAnovaModal() {
   _anovaTarget = 'anovaDevices';
   document.getElementById('anovaModal').classList.add('open');
-  if (getAnovaPat() && (!_anovaWS || _anovaWS.readyState > 1)) anovaConnect();
+  if (anovaConfigured() && (!_anovaWS || _anovaWS.readyState > 1)) anovaConnect();
   renderAnovaDevices(); renderAnovaRaw();
 }
 function closeAnovaModal() { document.getElementById('anovaModal').classList.remove('open'); }
@@ -5543,7 +5802,7 @@ function openAppliancePrefill(pref) { _anovaPrefill = pref; openAnovaModal(); }
 function openFridgeAppliances() {
   _anovaTarget = 'fmAppDevices';
   document.getElementById('fmAppPanel').classList.add('open');
-  if (getAnovaPat() && (!_anovaWS || _anovaWS.readyState > 1)) anovaConnect();
+  if (anovaConfigured() && (!_anovaWS || _anovaWS.readyState > 1)) anovaConnect();
   renderAnovaDevices();
 }
 function closeFridgeAppliances() {
@@ -5745,7 +6004,7 @@ const APP_VERSION = 'v48'; // keep in step with sw.js CACHE_NAME
 (function(){ const el = document.getElementById('appVersion'); if (el) el.textContent = 'App version: ' + APP_VERSION; })();
 
 // Auto-connect to Anova on load if a token is set, so devices are ready everywhere
-if (getAnovaPat()) { try { anovaConnect(); } catch (e) {} }
+if (anovaConfigured()) { try { anovaConnect(); } catch (e) {} }
 
 // Complete a Sonos OAuth redirect if we came back with ?code
 try { handleSonosRedirect(); } catch (e) {}
