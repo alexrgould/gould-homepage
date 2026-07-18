@@ -24,6 +24,19 @@ Built to run on **GitHub Pages** with no build step. Open `index.html` in a brow
 - **URL import** — paste a recipe URL to auto-extract name, ingredients, and instructions via CORS proxy
 - **Recipe Discovery** — built-in suggested recipes you can add to your book with one tap
 
+### Cook Mode
+- **Step-by-step cooking view** — full-screen steps in large type, swipe or tap through, with auto-detected tap-to-start timers ("5-6 minutes" becomes a timer)
+- **Ingredients while you cook** — on wide screens (kitchen iPad landscape) the full ingredient list stays pinned beside the steps with the current step's items highlighted; on phones a 🧾 Ingredients button flips to a full-screen checklist and back to your step
+- **Mise en place checklist** — tap ingredients to check them off as you gather them (per cooking session, not synced)
+- **Multi-timers, music scene, wake lock** — concurrent named timers, one-tap Sonos cooking playlist, and the screen stays awake while cooking
+
+### AI Recipe Steps (Claude AI)
+- **Write missing steps in one tap** — the Recipes tab shows a banner when recipes have no steps; "✨ Write all" has Claude write Cook Mode steps for every one of them from its ingredient list, a few at a time, with progress
+- **Per-recipe generation** — a "✨ Write steps with AI" button appears on any recipe without steps, in both the recipe detail view and Cook Mode itself
+- **Timer-aware output** — generated steps include explicit times and temps so Cook Mode's tap-to-start timers work automatically
+- **Synced like any edit** — steps land in the recipe's notes, so they sync to every device instantly; recipes are badged "✨ AI-written" until you edit them yourself
+- **Model configurable** — Settings → Claude AI → "Recipe Steps" (default Sonnet 5)
+
 ### Recipe Chat (Claude AI)
 - **Conversational recipe assistant** — ask questions about recipes, get cooking tips, request modifications
 - **Context-aware** — the chat knows your full recipe book
@@ -106,6 +119,7 @@ meal-planner/
   sw.js               # Service worker (network-first caching)
   manifest.json       # PWA manifest for install-to-homescreen
   claude-worker.js    # Cloudflare Worker source for Claude API proxy
+  anova-proxy-worker.js # Cloudflare Worker: keeps the Anova token out of the browser
   rss-test.html       # Standalone RSS feed service diagnostic tool
   README.md           # This file
 ```
@@ -194,6 +208,14 @@ Browser can't call the Anthropic API directly (CORS). A tiny Cloudflare Worker (
 1. Get a free API key from [fdc.nal.usda.gov](https://fdc.nal.usda.gov/api-guide)
 2. Enter it in **Settings → Nutrition API Key**
 
+### 6. Anova Smart Appliances (optional)
+
+1. Get a Personal Access Token from the Anova Oven app → More → Developer → Personal Access Tokens (starts with `anova-`)
+2. Deploy `anova-proxy-worker.js` to Cloudflare Workers (same flow as the Claude proxy)
+3. Add the token as a **Secret** named `ANOVA_PAT` on the Worker; optionally set `ALLOWED_ORIGIN` to your site origin
+4. In **Settings → Smart Appliances**, paste the Worker URL (any of `wss://`, `https://`, or a bare hostname works — the app normalizes it)
+5. The token never appears in the app, localStorage, or the git repo. A direct-token field remains as a fallback, stored in localStorage only — never hardcode a token in `index.html`
+
 ---
 
 ## Claude AI Models
@@ -203,8 +225,8 @@ The app supports four Claude models, configurable in Settings:
 | Model | Speed | Cost | Best For |
 |-------|-------|------|----------|
 | **Haiku 4.5** | Fastest | Cheapest | Quick tips, substitutions, daily use |
-| **Sonnet 4.5** | Fast | Moderate | Good balance of speed and quality |
-| **Sonnet 4.6** | Fast | Moderate | Latest Sonnet, improved reasoning |
+| **Sonnet 4.5** | Fast | Moderate | Older Sonnet, kept for compatibility |
+| **Sonnet 5** | Fast | Moderate | Latest Sonnet (default for most features) |
 | **Opus 4.6** | Slower | Highest | Complex meal planning, nuanced parenting advice |
 
 ---
