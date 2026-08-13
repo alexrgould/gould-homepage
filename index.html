@@ -1215,7 +1215,7 @@ const CATEGORIES = ['Produce','Meat & Seafood','Dairy','Bakery','Pantry','Frozen
 const DEFAULT_CUISINES = ['American','Mexican','Italian','Asian','Mediterranean','Indian','Southern','Comfort Food','Salads & Light','Other'];
 function getCuisines() { return (data.cuisines && data.cuisines.length) ? data.cuisines : DEFAULT_CUISINES; }
 function ensureDD() { if(!data.doordash) data.doordash={}; if(!data.doordash.orders) data.doordash.orders=[]; if(!data.doordash.restaurants) data.doordash.restaurants=[]; if(!data.doordash.monthlyBudget&&data.doordash.monthlyBudget!==0) data.doordash.monthlyBudget=150; if(!data.doordash.monthlyTarget&&data.doordash.monthlyTarget!==0) data.doordash.monthlyTarget=4; return data.doordash; }
-function emptyData() { return { recipes: [], mealPlan: {}, staples: [], checkedItems: {}, children: [], cuisines: [...DEFAULT_CUISINES], usageHistory: [], doordash: { orders: [], monthlyBudget: 150, monthlyTarget: 4 }, consequences: [], groceryExtras: [], blogs: [] }; }
+function emptyData() { return { recipes: [], mealPlan: {}, staples: [], checkedItems: {}, children: [], cuisines: [...DEFAULT_CUISINES], usageHistory: [], doordash: { orders: [], monthlyBudget: 150, monthlyTarget: 4 }, consequences: [], groceryExtras: [], blogs: [], factHistory: [] }; }
 let data = emptyData();
 let familyCode = null;
 let currentWeekStart = getMonday(new Date());
@@ -1241,7 +1241,7 @@ function loadLocal() {
 
 // Save to Firebase (debounced)
 let savePending = false;
-const SYNC_FIELDS = ['recipes','mealPlan','staples','children','checkedItems','cuisines','usageHistory','doordash','consequences','groceryExtras','blogs'];
+const SYNC_FIELDS = ['recipes','mealPlan','staples','children','checkedItems','cuisines','usageHistory','doordash','consequences','groceryExtras','blogs','factHistory'];
 // Last state we saved or received per field (JSON strings). Used to write only
 // changed sections, so two devices editing different things don't clobber each other.
 let _lastSynced = {};
@@ -1387,8 +1387,8 @@ function startListeningNow() {
     // Record the remote state so the next save only writes truly-changed sections
     SYNC_FIELDS.forEach(f => { if (remote[f] !== undefined) _lastSynced[f] = JSON.stringify(remote[f]); });
     // Only update if data actually changed (avoid echo from our own save)
-    const remoteStr = JSON.stringify({ r: remote.recipes, m: remote.mealPlan, s: remote.staples, c: remote.children, ci: remote.checkedItems, cu: remote.cuisines, uh: remote.usageHistory, dd: remote.doordash, cq: remote.consequences, ge: remote.groceryExtras, bl: remote.blogs });
-    const localStr = JSON.stringify({ r: data.recipes, m: data.mealPlan, s: data.staples, c: data.children, ci: data.checkedItems, cu: data.cuisines, uh: data.usageHistory, dd: data.doordash, cq: data.consequences, ge: data.groceryExtras, bl: data.blogs });
+    const remoteStr = JSON.stringify({ r: remote.recipes, m: remote.mealPlan, s: remote.staples, c: remote.children, ci: remote.checkedItems, cu: remote.cuisines, uh: remote.usageHistory, dd: remote.doordash, cq: remote.consequences, ge: remote.groceryExtras, bl: remote.blogs, fh: remote.factHistory });
+    const localStr = JSON.stringify({ r: data.recipes, m: data.mealPlan, s: data.staples, c: data.children, ci: data.checkedItems, cu: data.cuisines, uh: data.usageHistory, dd: data.doordash, cq: data.consequences, ge: data.groceryExtras, bl: data.blogs, fh: data.factHistory });
     if (remoteStr !== localStr) {
       data.recipes = remote.recipes || [];
       data.mealPlan = remote.mealPlan || {};
@@ -1401,6 +1401,7 @@ function startListeningNow() {
       data.consequences = remote.consequences || [];
       data.groceryExtras = remote.groceryExtras || [];
       data.blogs = remote.blogs || [];
+      data.factHistory = remote.factHistory || [];
       persistLocal();
       refreshCurrentView();
     }
@@ -3216,7 +3217,9 @@ function anovaConfigured() { return !!(getAnovaProxy() || getAnovaPat()); }
 // Sonos OAuth client id (public; the secret lives on the Worker). Hardcode here once you have it.
 const DEFAULT_SONOS_CLIENT_ID = '1acc19d7-1e49-482d-a3e0-06da4e240dcf';
 function getSonosClientId() { return (localStorage.getItem('sonos_client_id') || DEFAULT_SONOS_CLIENT_ID || '').trim(); }
-function sonosRedirectUri() { return location.origin + location.pathname; }
+// Always the clean folder URL (no index.html), so the redirect URI registered
+// in the Sonos developer portal matches no matter how the app was opened
+function sonosRedirectUri() { return location.origin + location.pathname.replace(/index\.html$/, ''); }
 // Baked-in parenting philosophy fallback (used when none is saved locally).
 const DEFAULT_PHILOSOPHY = `You are a parenting advisor aligned with our family's philosophy. Use the following as your foundation:
 Core principles:
@@ -5993,62 +5996,283 @@ function renderFridgeGroceryRecent() {
     : `<span class="fm-hint">Add anything you're running low on — it syncs to your phone.</span>`;
 }
 
-// A daily "did you know" for the kids — kid-friendly, tied to dinner/weather/date.
+// A daily "did you know" for the kids — AI-generated with a synced no-repeat
+// memory, backed by a 200-fact offline pool that also never repeats.
 const FRIDGE_FALLBACK_FACTS = [
-  'Honey never spoils — archaeologists found 3,000-year-old honey that was still good to eat.',
-  'A group of flamingos is called a flamboyance.',
-  'Carrots were originally purple, not orange.',
-  'Octopuses have three hearts and blue blood.',
-  'Bananas are berries, but strawberries technically are not.',
-  'A bolt of lightning is about five times hotter than the surface of the sun.',
-  'Honeybees can recognize human faces.',
-  'The fresh smell after rain has a name: petrichor.',
-  'Your nose can remember about 50,000 different smells.',
-  'Cucumbers are about 96% water.',
+  "The Sun is so big that about one million Earths could fit inside it.",
+  "One day on Venus lasts longer than its whole year.",
+  "Footprints left on the Moon will stay for millions of years, because there is no wind to blow them away.",
+  "Saturn is so light for its size that it would float in a giant bathtub of water.",
+  "On Mars, sunsets look blue.",
+  "Jupiter's Great Red Spot is a storm bigger than the whole Earth that has raged for hundreds of years.",
+  "Space is completely silent, because there is no air to carry sound.",
+  "The International Space Station circles the whole Earth about every 90 minutes.",
+  "Astronauts grow a little taller in space because their spines stretch out.",
+  "There are more stars in the universe than grains of sand on all of Earth's beaches.",
+  "Uranus rolls around the Sun on its side, like a ball.",
+  "Light from the Sun takes about eight minutes to reach your eyes.",
+  "Mercury and Venus are the only planets with no moons at all.",
+  "The Moon is slowly drifting away from Earth, about as fast as your fingernails grow.",
+  "Olympus Mons on Mars is the biggest volcano we know, almost three times taller than Mount Everest.",
+  "Scientists think it might rain diamonds deep inside Neptune.",
+  "A year on Neptune lasts about 165 Earth years.",
+  "The Sun is a star, just much closer to us than all the others.",
+  "A teaspoon of a neutron star would weigh about as much as a mountain.",
+  "Some stars spin hundreds of times every second.",
+  "The blue whale is the largest animal that has ever lived, bigger than any dinosaur.",
+  "A blue whale's heart is about the size of a small car.",
+  "Sea otters hold hands while they sleep so they don't drift apart.",
+  "Starfish have no brain and no blood, and can regrow a lost arm.",
+  "Jellyfish have been on Earth longer than dinosaurs.",
+  "The ocean holds about 97 percent of all the water on Earth.",
+  "Dolphins sleep with one half of their brain at a time, keeping one eye open.",
+  "Some parrotfish sleep in a bubble of their own slime.",
+  "Seahorses are the only animals where the dads carry the babies.",
+  "The deepest part of the ocean is deeper than Mount Everest is tall.",
+  "Coral reefs are built by tiny animals smaller than your fingernail.",
+  "An octopus can squeeze through any hole bigger than its beak.",
+  "Pistol shrimp snap their claws so fast it makes a flash of light and a sound louder than a rock concert.",
+  "Whale songs can travel hundreds of miles underwater.",
+  "Some penguins can't fly in the air, but they zoom underwater at 20 miles per hour.",
+  "Sea turtles swim thousands of miles and still find the beach where they hatched.",
+  "Lobsters taste with their legs.",
+  "Electric eels can make enough electricity to light up a Christmas tree.",
+  "Sharks have been around longer than trees.",
+  "Flying fish can glide above the waves longer than a football field.",
+  "A cheetah can go from standing still to highway speed in about three seconds.",
+  "Elephants can't jump.",
+  "A giraffe's tongue is about as long as your arm, and it's blue-purple.",
+  "Kangaroos can't walk backwards.",
+  "Ants can lift things many times heavier than their own bodies.",
+  "A snail can sleep for up to three years.",
+  "Cows have best friends and get lonely without them.",
+  "Butterflies taste with their feet.",
+  "An ostrich's eye is bigger than its brain.",
+  "Bats are the only mammals that can truly fly.",
+  "A hummingbird can fly backwards and even upside down.",
+  "Owls can turn their heads almost all the way around, but they can't move their eyes.",
+  "Polar bear skin is black under all that white fur.",
+  "Zebra stripes are like fingerprints, no two zebras match.",
+  "A woodpecker can peck about 20 times every second.",
+  "Dogs' noses are wet to help them catch smells out of the air.",
+  "Cats spend about two-thirds of their lives asleep.",
+  "Fireflies flash in patterns to talk to each other.",
+  "A grasshopper can jump 20 times the length of its own body.",
+  "Sloths move so slowly that green algae grows on their fur.",
+  "Your heart beats about 100,000 times every single day.",
+  "Grown-ups have 206 bones, but babies are born with about 300.",
+  "The smallest bone in your body is in your ear, smaller than a grain of rice.",
+  "You blink about 15,000 times a day.",
+  "Your fingernails grow about four times faster than your toenails.",
+  "Goosebumps are your body trying to fluff up fur you don't have anymore.",
+  "Your brain uses about a fifth of all your body's energy.",
+  "Kids have more taste buds than grown-ups do.",
+  "Your stomach gets a brand-new slimy lining every few days so it doesn't digest itself.",
+  "For its size, the strongest muscle in your body is in your jaw.",
+  "You are about half an inch taller in the morning than at night.",
+  "Everyone has a totally unique tongue print, just like fingerprints.",
+  "Your ears and nose keep growing your whole life.",
+  "Bone is about five times stronger than a piece of steel the same weight.",
+  "Your body makes about a liter of spit every day.",
+  "Hiccups happen when the muscle that helps you breathe gets the jitters.",
+  "Your blood makes a full trip around your body in about one minute.",
+  "The little half-moons on your fingernails are called lunulae, which means little moons.",
+  "Humans glow very faintly in the dark, just too dim for our eyes to see.",
+  "Your left lung is a little smaller than your right, to leave room for your heart.",
+  "Popcorn pops because a tiny drop of water inside each kernel turns to steam and bursts out.",
+  "Apples float in water because they are about one-quarter air.",
+  "Peanuts aren't nuts at all, they grow underground like beans.",
+  "Tomatoes are fruits, and so are cucumbers, pumpkins, and green beans.",
+  "Chocolate was once so precious that people used cocoa beans as money.",
+  "Carrots are full of vitamin A, which really does help your eyes.",
+  "Ketchup was once sold as medicine.",
+  "An ear of corn almost always has an even number of rows.",
+  "Ripe cranberries bounce like little rubber balls.",
+  "Onions make you cry because they puff out a gas that tickles your eyes.",
+  "White chocolate isn't really chocolate, it has no cocoa solids in it.",
+  "Broccoli, cauliflower, kale, and cabbage are all the same plant, shaped by farmers over time.",
+  "A pineapple takes about two years to grow.",
+  "Bread rises because yeast burps tiny bubbles of gas into the dough.",
+  "People were making cheese before anyone invented writing.",
+  "Watermelons are about 92 percent water.",
+  "Pasta comes in more than 300 shapes, with names like little ears and butterflies.",
+  "Rice feeds more people around the world than any other food.",
+  "Baking soda makes pancakes fluffy by filling them with tiny air bubbles.",
+  "Salt is the only rock that people eat.",
+  "No two snowflakes are exactly alike, but every one has six sides.",
+  "Thunder is the sound of lightning heating the air so fast it booms.",
+  "Count the seconds between a lightning flash and its boom: five seconds is about a mile away.",
+  "Rainbows are full circles, we usually only see the top half from the ground.",
+  "The wind doesn't make a sound until it bumps into something.",
+  "A big fluffy cloud can weigh as much as a hundred elephants.",
+  "Lightning strikes the Earth about 100 times every second.",
+  "The hottest place on Earth, Death Valley, is right here in California.",
+  "The center of the Earth is about as hot as the surface of the Sun.",
+  "Antarctica is the biggest desert on Earth, deserts just need to be dry, not hot.",
+  "Hailstones can grow as big as grapefruits.",
+  "A rainbow made by moonlight is called a moonbow.",
+  "A big tree can drink a whole bathtub of water in one day.",
+  "Mount Everest grows a tiny bit taller every year.",
+  "Rivers wiggle because water always looks for the easiest path downhill.",
+  "Fog is just a cloud resting on the ground.",
+  "The Amazon rainforest makes so much of its own rain that clouds form over it every day.",
+  "Lava from a volcano can be five times hotter than a kitchen oven.",
+  "Ocean waves are made by wind pushing on the water.",
+  "Dew drops are bits of the air's water that settle down when the night turns cool.",
+  "The first airplane flight lasted just 12 seconds.",
+  "Bubble wrap was invented to be wallpaper before anyone popped it for fun.",
+  "The teddy bear is named after a real president, Theodore Teddy Roosevelt.",
+  "Velcro was invented after a scientist studied the burrs stuck to his dog's fur.",
+  "The first computers were so big they filled a whole room.",
+  "Popsicles were invented by accident by an 11-year-old who left his drink outside on a cold night.",
+  "The first cars had no steering wheels, drivers steered with a stick like a boat.",
+  "Long ago, a person had to walk in front of every train waving a red flag.",
+  "The zipper was invented decades before anyone put it on clothes.",
+  "An astronaut's space suit costs millions of dollars.",
+  "The first message sent over the internet was just two letters, L and O, then the computer crashed.",
+  "Pencils can write upside down and even underwater, but most pens can't.",
+  "Elevators became one of the safest ways to travel thanks to a special brake invented in 1852.",
+  "Roller coasters were partly inspired by giant ice slides in Russia.",
+  "LEGO bricks made today still snap onto bricks made in 1958.",
+  "There are more LEGO minifigures in the world than there are people.",
+  "Alexander Graham Bell made the very first phone call in 1876, to his helper in the next room.",
+  "Paper was invented in China about 2,000 years ago.",
+  "Submarines dive and rise by filling and emptying big tanks of water.",
+  "The Wright brothers, who built the first airplane, started out fixing bicycles.",
+  "The T. rex had teeth as long as bananas.",
+  "Some dinosaurs were as small as chickens.",
+  "Birds are living dinosaurs, a chickadee and a T. rex are distant cousins.",
+  "Stegosaurus had a brain the size of a walnut in a body as big as a van.",
+  "Dinosaur fossils have been found on every continent, even Antarctica.",
+  "The longest dinosaur necks stretched longer than a school bus.",
+  "Woolly mammoths were still alive while the pyramids were being built.",
+  "Some dinosaurs swallowed stones to help grind up food in their bellies.",
+  "The word dinosaur means terribly great lizard.",
+  "Velociraptors were about the size of a turkey, and probably had feathers.",
+  "Before the dinosaurs, there were dragonflies with wings as wide as a hawk's.",
+  "Fossilized dinosaur poop is called coprolite, and scientists love finding it.",
+  "Dinosaurs lived on Earth hundreds of times longer than humans have so far.",
+  "Some dinosaur eggs were as big as basketballs.",
+  "Pterodactyls weren't dinosaurs, they were flying reptile cousins.",
+  "The ancient ancestors of whales walked on land on four legs.",
+  "Saber-toothed cats had teeth as long as butter knives.",
+  "Ammonites, spiral seashells older than the dinosaurs, can still be found as fossils today.",
+  "Triceratops' huge neck frill may have helped it look big and stay cool.",
+  "Crocodiles watched the dinosaurs come and go, and they're still here.",
+  "Bamboo can grow three feet in a single day.",
+  "The biggest living thing on Earth is a giant fungus in Oregon, bigger than 1,000 soccer fields.",
+  "A sunflower is really thousands of tiny flowers packed together.",
+  "Trees talk to each other underground through webs of fungus on their roots.",
+  "The oldest known tree is a bristlecone pine in California, almost 5,000 years old.",
+  "A saguaro cactus swells up like a sponge when it rains.",
+  "California's redwood trees grow taller than a 30-story building.",
+  "Venus flytraps can count, they only snap shut when a bug touches two of their hairs.",
+  "Apples, pears, plums, and cherries are all cousins of the rose.",
+  "Some seeds can sleep for hundreds of years and still sprout.",
+  "That fresh-cut-grass smell is actually the grass sending out a message.",
+  "A single big oak tree can drop 10,000 acorns in one year.",
+  "Dandelion seeds can ride the wind for miles like tiny parachutes.",
+  "Strawberries wear their seeds on the outside, about 200 of them each.",
+  "Maple syrup is just tree sap, boiled down until it's sweet.",
+  "Coconuts can float across whole oceans and sprout on faraway beaches.",
+  "Moss grows thickest on the shady side of a tree.",
+  "Champion giant pumpkins can gain 30 pounds in a single day.",
+  "About half the oxygen you breathe comes from tiny plants in the ocean.",
+  "A tree stump shows one ring for every year the tree lived.",
+  "The letter E is the most used letter in English.",
+  "A jiffy is a real unit of time, a tiny fraction of a second.",
+  "Eleven plus two and twelve plus one use exactly the same letters, and equal the same number.",
+  "The dot over the letters i and j is called a tittle.",
+  "A googol is a 1 with a hundred zeros after it, and Google is named after it.",
+  "Zero was invented long after the other numbers, people counted for ages without it.",
+  "The shortest complete sentence in English is Go!",
+  "A group of pandas is called an embarrassment.",
+  "The word smiles has a mile between its first and last letters.",
+  "Spell out any odd number and you'll find the letter E in it.",
+  "The hashtag symbol's fancy name is octothorpe.",
+  "A palindrome reads the same backwards, like racecar and mom.",
+  "The plastic tips on shoelaces are called aglets.",
+  "Rhythm is one of the longest common words with no A, E, I, O, or U.",
+  "Four is the only number spelled with the same number of letters as its value.",
+  "In the Middle Ages, a moment was a real measure of time, exactly 90 seconds.",
+  "A million seconds is about 11 days, but a billion seconds is about 32 years.",
+  "The English alphabet used to have extra letters, one was called thorn.",
+  "Q is the only letter that never appears in a U.S. state name.",
+  "A baker's dozen means 13, from bakers tossing in one extra to be safe."
 ];
 let _factTriedDate = '';
 let _fridgeFactText = '';
+
+// --- No-repeat memory (synced via Firestore in data.factHistory) ---
+function _normFact(t) { return (t || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 90); }
+function factAlreadyUsed(text) { return (data.factHistory || []).some(f => f.k === _normFact(text)); }
+function markFactUsed(text) {
+  if (!text) return;
+  if (!data.factHistory) data.factHistory = [];
+  const k = _normFact(text);
+  if (data.factHistory.some(f => f.k === k)) return;
+  data.factHistory.push({ k, t: text, d: dateKey(new Date()) });
+  if (data.factHistory.length > 600) data.factHistory = data.factHistory.slice(-600);
+  persist();
+}
+function pickFallbackFact() {
+  const fresh = FRIDGE_FALLBACK_FACTS.filter(f => !factAlreadyUsed(f));
+  const pool = fresh.length ? fresh : FRIDGE_FALLBACK_FACTS; // whole pool heard — start over
+  const seed = parseInt(dateKey(new Date()).replace(/-/g, ''), 10);
+  return pool[seed % pool.length];
+}
+
 function showFridgeFact(text) {
   const el = document.getElementById('fmFact'); if (!el) return;
   _fridgeFactText = text;
   const names = (data.children || []).filter(c => c.name).map(c => esc(c.name)).join(' & ') || 'the kids';
   el.style.display = 'block';
   el.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;">
-      <h4 style="margin:0;">💡 For ${names}</h4>
-      <button class="fm-speak" onclick="speakFact(_fridgeFactText)" aria-label="Read aloud">🔊 Read aloud</button>
+      <h4 style="margin:0;">\ud83d\udca1 For ${names}</h4>
+      <button class="fm-speak" onclick="speakFact(_fridgeFactText)" aria-label="Read aloud">\ud83d\udd0a Read aloud</button>
     </div>
     <div class="fm-fact-text" style="margin-top:6px;">${esc(text)}</div>`;
 }
+
+const FACT_TOPICS = ['space and planets', 'the ocean and sea creatures', 'animals and bugs', 'the human body', 'food and cooking science', 'weather and nature', 'machines and inventions', 'dinosaurs and long-ago creatures', 'plants and trees', 'words, numbers, and silly records'];
+
 async function refreshFridgeFact(force) {
   const el = document.getElementById('fmFact'); if (!el) return;
   const todayKey = dateKey(new Date());
   let cached = null; try { cached = JSON.parse(localStorage.getItem('mp_fridge_fact') || 'null'); } catch (e) {}
   if (!force && cached && cached.date === todayKey && cached.text) { showFridgeFact(cached.text); return; }
-  // Always show something immediately so the bar is never empty
-  showFridgeFact(FRIDGE_FALLBACK_FACTS[new Date().getDate() % FRIDGE_FALLBACK_FACTS.length]);
+  // Show a never-heard pool fact immediately so the bar is never empty
+  const fallback = pickFallbackFact();
+  showFridgeFact(fallback);
   // Only attempt the AI fact once per day per session (avoid hammering on 5-min refresh)
   if (!force && _factTriedDate === todayKey) return;
   _factTriedDate = todayKey;
-  if (!getProxyUrl()) return;
+  const lockIn = (text) => {
+    try { localStorage.setItem('mp_fridge_fact', JSON.stringify({ date: todayKey, text })); } catch (e) {}
+    markFactUsed(text);
+    showFridgeFact(text);
+  };
+  if (!getProxyUrl()) { lockIn(fallback); return; }
   try {
     const meals = data.mealPlan[todayKey] || [];
     const tonight = meals.length ? data.recipes.find(r => r.id === meals[0].recipeId) : null;
-    const ings = tonight ? (tonight.ingredients || []).slice(0, 5).map(i => i.name).join(', ') : '';
-    let cond = '', temp = '';
-    if (weatherCache && weatherCache.daily) {
-      const i = Math.max(0, weatherCache.daily.time.indexOf(todayKey));
-      cond = WMO_LABELS[weatherCache.daily.weathercode[i]] || '';
-      temp = Math.round(weatherCache.daily.temperature_2m_max[i]);
-    }
     const kids = (data.children || []).filter(c => c.name).map(c => {
       const a = getChildAge(c.birthday); return c.name + (a != null ? ` (age ${Math.floor(a / 12)})` : '');
     }).join(' and ');
-    const dateStr = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
-    const prompt = `Give ONE delightful, true, kid-friendly fact (1-2 short sentences) that ${kids || 'young kids'} would enjoy. Tie it to ONE of these: tonight's dinner${tonight ? ` (${tonight.name}${ings ? ', made with ' + ings : ''})` : ''}, today's weather (${cond}${temp ? ', ' + temp + '°F' : ''}), or today's date (${dateStr}). Warm and simple. No preamble — just the fact.`;
-    const reply = await callClaude(prompt, { system: 'You write one short, true, delightful fact for young children. Output only the fact, 1-2 sentences, no preamble or quotation marks.', maxTokens: 120 });
-    const text = (reply || '').trim().replace(/^["']|["']$/g, '');
-    if (text) { try { localStorage.setItem('mp_fridge_fact', JSON.stringify({ date: todayKey, text })); } catch (e) {} showFridgeFact(text); }
-  } catch (e) { /* fallback already shown */ }
+    const topic = FACT_TOPICS[(new Date().getDate() + new Date().getMonth() * 3) % FACT_TOPICS.length];
+    const avoid = (data.factHistory || []).slice(-80).map(f => '- ' + (f.t || f.k)).join('\n');
+    const buildPrompt = (extraAvoid) => `Give ONE delightful, TRUE, kid-friendly fact (1-2 short sentences) that ${kids || 'young kids'} would enjoy hearing read aloud at breakfast. Today's topic: ${topic}${tonight ? ` (or tie it to tonight's dinner, ${tonight.name}, if there's a natural fit)` : ''}. Warm and simple. No preamble, no quotation marks - just the fact.
+
+CRITICAL: it must be genuinely new. Do NOT repeat or closely paraphrase ANY of these facts they have already heard:
+${avoid || '(none yet)'}${extraAvoid ? '\n- ' + extraAvoid : ''}`;
+    let text = (await callClaude(buildPrompt(), { system: 'You write one short, true, delightful fact for young children. Output only the fact.', maxTokens: 150 }) || '').trim().replace(/^["']|["']$/g, '');
+    if (text && factAlreadyUsed(text)) {
+      // Claude repeated itself — one retry with the duplicate called out
+      text = (await callClaude(buildPrompt(text), { system: 'You write one short, true, delightful fact for young children. Output only the fact.', maxTokens: 150 }) || '').trim().replace(/^["']|["']$/g, '');
+    }
+    if (text && !factAlreadyUsed(text)) lockIn(text);
+    else lockIn(fallback);
+  } catch (e) { lockIn(fallback); }
 }
 
 // ===========================================================================
@@ -6488,6 +6712,7 @@ if(!data.doordash) data.doordash={ orders:[], monthlyBudget:150, monthlyTarget:4
 if(!data.consequences) data.consequences=[];
 if(!data.groceryExtras) data.groceryExtras=[];
 if(!data.blogs) data.blogs=[];
+if(!data.factHistory) data.factHistory=[];
 initFirebase();
 
 // Register service worker for PWA
