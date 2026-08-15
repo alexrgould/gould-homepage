@@ -292,6 +292,13 @@ h3 { font-size: 13px; font-weight: 600; margin-bottom: 8px; color: var(--text-se
 #cookMode .cook-nav button { flex: 1; padding: 16px; font-size: 16px; font-weight: 600; border-radius: 12px; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
 #cookMode .cook-nav button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
 
+/* --- Multi-calendar picker + color dots --- */
+.cal-check { display: flex; align-items: center; gap: 9px; padding: 9px 10px; border: 1px solid var(--border); border-radius: 10px; margin-bottom: 6px; cursor: pointer; background: var(--surface); font-size: 14px; }
+.cal-check.on { border-color: var(--blue); background: var(--blue-light); }
+.cal-check input { width: 17px; height: 17px; accent-color: var(--blue); flex-shrink: 0; }
+.cal-check .cal-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cal-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; margin-right: 6px; vertical-align: baseline; }
+
 /* --- Cook Mode ingredients: pinned panel on wide screens, overlay on phones --- */
 #cookMode .cook-body { flex: 1; display: flex; min-height: 0; }
 #cookIngrPanel { display: none; }
@@ -740,8 +747,9 @@ nav button.active svg { animation: tabSpring .4s cubic-bezier(.34,1.56,.64,1); }
       <div id="calendarStatus"></div>
       <div id="calendarPicker" style="display:none;">
         <div class="form-group" style="margin-bottom:10px;">
-          <label>Which calendar?</label>
-          <select id="calendarSelect" onchange="selectCalendar(this.value)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:var(--radius);"></select>
+          <label>Which calendars?</label>
+          <div id="calendarCheckList"></div>
+          <p style="font-size:11px;color:var(--text-secondary);margin-top:4px;">Pick as many as you like — events merge into one list, color-coded by calendar.</p>
         </div>
       </div>
       <button class="btn btn-secondary btn-block" id="calConnectBtn" onclick="connectGoogleCalendar()">Connect Calendar</button>
@@ -1353,7 +1361,18 @@ async function renderBackupsList() {
         <button class="btn btn-secondary btn-sm" onclick="restoreBackup('${esc(d.id)}')">Restore</button>
       </div>`;
     }).join('');
-  } catch (e) { el.innerHTML = `<p style="font-size:12px;color:var(--red);">Could not load backups: ${esc(e.message)}</p>`; }
+  } catch (e) {
+    if (e.code === 'permission-denied') {
+      el.innerHTML = `<p style="font-size:12px;color:var(--text-secondary);">Backups need a one-time Firebase setup (about 2 minutes):</p>
+        <ol style="font-size:12px;color:var(--text-secondary);padding-left:18px;margin:6px 0;line-height:1.6;">
+          <li>Firebase console → Build → <strong>Authentication</strong> → Sign-in method → enable <strong>Anonymous</strong></li>
+          <li>Firestore Database → <strong>Rules</strong> → paste <code>firestore.rules</code> from the repo → Publish</li>
+        </ol>
+        <p style="font-size:12px;color:var(--text-secondary);">Do them in that order. Everything else keeps working meanwhile — your data is safe, it just isn't being snapshotted yet.</p>`;
+    } else {
+      el.innerHTML = `<p style="font-size:12px;color:var(--red);">Could not load backups: ${esc(e.message)}</p>`;
+    }
+  }
 }
 
 async function restoreBackup(id) {
@@ -1513,7 +1532,16 @@ const GCAL_SCOPES = 'https://www.googleapis.com/auth/calendar.readonly';
 let gcalToken = null;
 let gcalEvents = [];
 let gcalCalendars = [];
-let gcalSelectedId = localStorage.getItem('gcal_selected_id') || 'primary';
+let gcalSelectedIds = (function() {
+  // Multi-calendar. Migrates the old single-calendar setting automatically.
+  try {
+    const multi = JSON.parse(localStorage.getItem('gcal_selected_ids') || 'null');
+    if (Array.isArray(multi) && multi.length) return multi;
+  } catch (e) {}
+  const single = localStorage.getItem('gcal_selected_id');
+  return single ? [single] : ['primary'];
+})();
+function saveSelectedCalendars() { try { localStorage.setItem('gcal_selected_ids', JSON.stringify(gcalSelectedIds)); } catch (e) {} }
 let gcalTokenClient = null;
 let gapiInited = false;
 let gisInited = false;
@@ -1644,7 +1672,11 @@ async function handleGoogleRedirect() {
       updateCalendarSettingsUI();
       toast('Calendar connected — for good this time!');
     } else {
-      toast('Calendar connect failed' + (t.error ? ': ' + t.error : '') + ' — is GOOGLE_CLIENT_SECRET set on the Worker?');
+      const msg = String(t.error || '');
+      if (/GOOGLE_CLIENT_SECRET/i.test(msg)) toast('Add GOOGLE_CLIENT_SECRET to your Cloudflare Worker, then connect again');
+      else if (/redirect_uri/i.test(msg)) toast('Google rejected the redirect URI — add ' + sonosRedirectUri() + ' to your OAuth client');
+      else if (/invalid_grant/i.test(msg)) toast('That sign-in link expired — tap Connect again');
+      else toast('Calendar connect failed' + (msg ? ': ' + msg : ''));
     }
   } catch (e) { toast('Calendar connect error: ' + e.message); }
   history.replaceState({}, '', sonosRedirectUri());
@@ -1684,10 +1716,11 @@ function disconnectGoogleCalendar() {
   localStorage.removeItem('gcal_token');
   localStorage.removeItem('gcal_token_v2');
   localStorage.removeItem('gcal_selected_id');
+  localStorage.removeItem('gcal_selected_ids');
+  gcalSelectedIds = ['primary'];
   localStorage.removeItem('gcal_consented');
   gcalHasConsented = false;
-  gcalSelectedId = 'primary';
-  gapi.client.setToken(null);
+  try { gapi.client.setToken(null); } catch (e) {}
   updateCalendarSettingsUI();
   renderCalendarSummary();
   toast('Calendar disconnected');
@@ -1704,31 +1737,51 @@ async function fetchCalendarList() {
       primary: cal.primary || false,
       color: cal.backgroundColor || '#4285f4'
     }));
-    // If previously selected calendar isn't in the list, reset to primary
-    if (gcalSelectedId !== 'primary' && !gcalCalendars.find(c=>c.id===gcalSelectedId)) {
-      gcalSelectedId = 'primary';
-      localStorage.setItem('gcal_selected_id', gcalSelectedId);
-    }
+    // Resolve 'primary' to its real id, and drop any calendars that vanished
+    const primary = gcalCalendars.find(c => c.primary);
+    gcalSelectedIds = gcalSelectedIds.map(id => (id === 'primary' && primary) ? primary.id : id)
+      .filter(id => gcalCalendars.find(c => c.id === id));
+    if (!gcalSelectedIds.length) gcalSelectedIds = [primary ? primary.id : (gcalCalendars[0] || {}).id].filter(Boolean);
+    saveSelectedCalendars();
     renderCalendarPicker();
   } catch(e) { console.log('GCal list error:', e); }
 }
 
 function renderCalendarPicker() {
   const pickerEl = document.getElementById('calendarPicker');
-  const selectEl = document.getElementById('calendarSelect');
-  if (!pickerEl || !selectEl) return;
+  const listEl = document.getElementById('calendarCheckList');
+  if (!pickerEl || !listEl) return;
   if (!gcalToken || !gcalCalendars.length) { pickerEl.style.display = 'none'; return; }
   pickerEl.style.display = 'block';
-  selectEl.innerHTML = gcalCalendars.map(cal => {
+  listEl.innerHTML = gcalCalendars.map(cal => {
+    const on = gcalSelectedIds.includes(cal.id);
     const label = cal.primary ? cal.name + ' (primary)' : cal.name;
-    const selected = cal.id === gcalSelectedId || (gcalSelectedId === 'primary' && cal.primary);
-    return `<option value="${esc(cal.id)}" ${selected?'selected':''}>${esc(label)}</option>`;
+    return `<label class="cal-check ${on ? 'on' : ''}">
+      <input type="checkbox" ${on ? 'checked' : ''} onchange="toggleCalendar('${esc(cal.id).replace(/'/g, "\\'")}', this.checked)">
+      <span class="cal-dot" style="background:${esc(cal.color)};"></span>
+      <span class="cal-name">${esc(label)}</span>
+    </label>`;
   }).join('');
 }
 
-function selectCalendar(calId) {
-  gcalSelectedId = calId;
-  localStorage.setItem('gcal_selected_id', calId);
+function toggleCalendar(calId, on) {
+  if (on) { if (!gcalSelectedIds.includes(calId)) gcalSelectedIds.push(calId); }
+  else {
+    gcalSelectedIds = gcalSelectedIds.filter(id => id !== calId);
+    if (!gcalSelectedIds.length) { // never leave zero selected
+      gcalSelectedIds = [calId];
+      toast('Keep at least one calendar selected');
+    }
+  }
+  saveSelectedCalendars();
+  renderCalendarPicker();
+  fetchCalendarEvents();
+}
+
+function selectCalendar(calId) { // legacy single-select entry point
+  gcalSelectedIds = [calId];
+  saveSelectedCalendars();
+  renderCalendarPicker();
   fetchCalendarEvents();
   toast('Calendar updated');
 }
@@ -1736,48 +1789,64 @@ function selectCalendar(calId) {
 async function fetchCalendarEvents() {
   await ensureGcalToken();
   if (!gcalToken || !gapiInited) return;
-  try {
-    const now = new Date();
-    now.setHours(0,0,0,0);
-    // Find end of next week (next Sunday 23:59)
-    const today = new Date(now);
-    const dayOfWeek = today.getDay(); // 0=Sun
-    // This Sunday = today + (7 - dayOfWeek) if not Sunday, else today
-    const thisSunday = new Date(today);
-    thisSunday.setDate(today.getDate() + (dayOfWeek === 0 ? 0 : 7 - dayOfWeek));
-    // Next Sunday = thisSunday + 7
-    const nextSunday = new Date(thisSunday);
-    nextSunday.setDate(thisSunday.getDate() + 7);
-    nextSunday.setHours(23,59,59,999);
-    const response = await gapi.client.calendar.events.list({
-      calendarId: gcalSelectedId,
-      timeMin: now.toISOString(),
-      timeMax: nextSunday.toISOString(),
-      singleEvents: true,
-      orderBy: 'startTime',
-      maxResults: 50
-    });
-    gcalEvents = (response.result.items || []).map(ev => ({
-      title: ev.summary || '(No title)',
-      start: ev.start.dateTime || ev.start.date,
-      end: ev.end.dateTime || ev.end.date,
-      allDay: !ev.start.dateTime,
-      location: ev.location || ''
-    }));
-    renderCalendarSummary();
-  } catch(e) {
-    console.log('GCal fetch error:', e);
-    if (e.status === 401 && gcalHasConsented) {
-      // Token expired — try silent refresh
-      gcalToken = null;
-      localStorage.removeItem('gcal_token');
-      silentTokenRefresh();
-    } else if (e.status === 401) {
-      localStorage.removeItem('gcal_token');
-      gcalToken = null;
-      updateCalendarSettingsUI();
+  const now = new Date();
+  now.setHours(0,0,0,0);
+  const today = new Date(now);
+  const dayOfWeek = today.getDay(); // 0=Sun
+  const thisSunday = new Date(today);
+  thisSunday.setDate(today.getDate() + (dayOfWeek === 0 ? 0 : 7 - dayOfWeek));
+  const nextSunday = new Date(thisSunday);
+  nextSunday.setDate(thisSunday.getDate() + 7);
+  nextSunday.setHours(23,59,59,999);
+
+  const ids = (gcalSelectedIds && gcalSelectedIds.length) ? gcalSelectedIds : ['primary'];
+  let authFailed = false;
+
+  // One request per calendar, all in flight together
+  const perCal = await Promise.all(ids.map(async calId => {
+    try {
+      const response = await gapi.client.calendar.events.list({
+        calendarId: calId,
+        timeMin: now.toISOString(),
+        timeMax: nextSunday.toISOString(),
+        singleEvents: true,
+        orderBy: 'startTime',
+        maxResults: 50
+      });
+      const meta = gcalCalendars.find(c => c.id === calId) || {};
+      return (response.result.items || []).map(ev => ({
+        title: ev.summary || '(No title)',
+        start: ev.start.dateTime || ev.start.date,
+        end: ev.end.dateTime || ev.end.date,
+        allDay: !ev.start.dateTime,
+        location: ev.location || '',
+        calId,
+        calName: meta.name || '',
+        calColor: meta.color || 'var(--blue)'
+      }));
+    } catch (e) {
+      console.log('GCal fetch error for', calId, e);
+      if (e.status === 401) authFailed = true;
+      return []; // one bad calendar must not blank out the others
     }
+  }));
+
+  if (authFailed && !perCal.flat().length) {
+    if (gcalV2Tokens()) { await ensureGcalToken(); }
+    else if (gcalHasConsented) { gcalToken = null; localStorage.removeItem('gcal_token'); silentTokenRefresh(); }
+    else { localStorage.removeItem('gcal_token'); gcalToken = null; updateCalendarSettingsUI(); }
+    return;
   }
+
+  // Merge, de-duplicate shared events, and sort chronologically
+  const seen = new Set();
+  gcalEvents = perCal.flat().filter(ev => {
+    const k = ev.title + '|' + ev.start;
+    if (seen.has(k)) return false;
+    seen.add(k); return true;
+  }).sort((a, b) => (a.start > b.start ? 1 : a.start < b.start ? -1 : 0));
+
+  renderCalendarSummary();
 }
 
 function updateCalendarSettingsUI() {
@@ -1786,8 +1855,12 @@ function updateCalendarSettingsUI() {
   const pickerEl = document.getElementById('calendarPicker');
   if (!statusEl || !btnEl) return;
   if (gcalToken) {
-    const calName = gcalCalendars.find(c=>c.id===gcalSelectedId);
-    statusEl.innerHTML = `<p style="font-size:13px;color:var(--green);font-weight:600;margin-bottom:8px;">Connected${calName?' — '+esc(calName.name):''}</p>`;
+    const n = gcalSelectedIds.length;
+    const one = n === 1 ? gcalCalendars.find(c => c.id === gcalSelectedIds[0]) : null;
+    const label = one ? ' — ' + esc(one.name) : (n > 1 ? ' — ' + n + ' calendars' : '');
+    const durable = !!gcalV2Tokens();
+    statusEl.innerHTML = `<p style="font-size:13px;color:var(--green);font-weight:600;margin-bottom:8px;">Connected${label}</p>` +
+      (durable ? '' : `<p style="font-size:11px;color:var(--text-secondary);margin-bottom:8px;">Using the old hourly connection — tap Disconnect then Connect once to switch to the durable one.</p>`);
     btnEl.textContent = 'Disconnect Calendar';
     btnEl.onclick = disconnectGoogleCalendar;
     btnEl.className = 'btn btn-danger btn-block';
@@ -1873,7 +1946,8 @@ function renderCalendarSummary() {
         h += `<div class="cal-event">`;
         h += `<div class="cal-day-label${isToday?' cal-today':''}">${i===0?esc(dayLabel):''}</div>`;
         h += `<div>`;
-        h += `<div class="cal-event-title">${esc(ev.title)}</div>`;
+        const multiCal = gcalSelectedIds.length > 1;
+        h += `<div class="cal-event-title">${multiCal ? '<span class="cal-dot" style="background:' + esc(ev.calColor || 'var(--blue)') + ';"></span>' : ''}${esc(ev.title)}</div>`;
         if (ev.allDay) {
           h += `<div class="cal-event-time">All day</div>`;
         } else {
@@ -3966,7 +4040,7 @@ async function generateCalendarSummary(events, weekLabel) {
     return c.name + (age !== null ? ' (' + Math.floor(age/12) + ' years)' : '');
   }).join(', ');
 
-  const eventList = events.map(e => `${e.date}: ${e.title}${e.time ? ' at ' + e.time : ' (all day)'}`).join('\n');
+  const eventList = events.map(e => `${e.date}: ${e.title}${e.time ? ' at ' + e.time : ' (all day)'}${e.calName ? ' [' + e.calName + ']' : ''}`).join('\n');
   if (!eventList) return null;
 
   // Include weather for the relevant period
@@ -5935,7 +6009,8 @@ function renderFridgeMode() {
   const evHtml = todays.length
     ? todays.map(ev => {
         const time = ev.allDay ? 'All day' : new Date(ev.start).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-        return `<div><strong>${esc(time)}</strong> ${esc(ev.title)}</div>`;
+        const dot = (gcalSelectedIds.length > 1) ? '<span class="cal-dot" style="background:' + esc(ev.calColor || 'var(--blue)') + ';"></span>' : '';
+        return `<div>${dot}<strong>${esc(time)}</strong> ${esc(ev.title)}</div>`;
       }).join('')
     : '<div style="color:var(--text-secondary);">Nothing scheduled 🎈</div>';
 
@@ -6801,7 +6876,7 @@ if(familyCode) {
 }
 
 // Show which version this device is actually running (Settings → Sync card)
-const APP_VERSION = 'v57'; // keep in step with sw.js CACHE_NAME
+const APP_VERSION = 'v60'; // keep in step with sw.js CACHE_NAME
 (function(){ const el = document.getElementById('appVersion'); if (el) el.textContent = 'App version: ' + APP_VERSION; })();
 
 // Auto-connect to Anova on load if a token is set, so devices are ready everywhere
