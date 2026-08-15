@@ -1525,6 +1525,13 @@ function initGapi() {
     await gapi.client.init({});
     await gapi.client.load('https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest');
     gapiInited = true;
+    // Durable (refresh-token) connection takes priority
+    if (gcalV2Tokens()) {
+      await ensureGcalToken();
+      if (gcalToken) { fetchCalendarList(); fetchCalendarEvents(); }
+      updateCalendarSettingsUI();
+      return;
+    }
     const stored = localStorage.getItem('gcal_token');
     if (stored) {
       try {
@@ -1588,7 +1595,10 @@ setTimeout(() => clearInterval(gcalInitTimer), 15000);
 
 // Auto-refresh token before it expires (refresh 5 min early)
 setInterval(() => {
-  if (!gcalHasConsented || !gisInited || !gapiInited) return;
+  if (!gcalHasConsented || !gapiInited) return;
+  // Durable connection: the Worker renews it — no popups, no iframes
+  if (gcalV2Tokens()) { ensureGcalToken(); return; }
+  if (!gisInited) return;
   const stored = localStorage.getItem('gcal_token');
   if (!stored) return;
   try {
@@ -1600,9 +1610,68 @@ setInterval(() => {
   } catch(e) {}
 }, 60000);
 
+// --- Durable connection (authorization code + refresh token via the Worker) ---
+// The old browser-only flow dies every hour and its silent renewal is blocked
+// by Safari/Chrome cookie rules — that's the daily disconnect. This flow gets
+// a refresh token once, and the Worker renews access tokens forever after.
+function gcalV2Tokens() { try { return JSON.parse(localStorage.getItem('gcal_token_v2') || 'null'); } catch (e) { return null; } }
+
 function connectGoogleCalendar() {
-  if (!gisInited) { toast('Google services still loading, try again in a moment'); return; }
-  gcalTokenClient.requestAccessToken({ prompt: gcalHasConsented ? '' : 'consent' });
+  const state = 'gcal_' + Math.random().toString(36).slice(2);
+  try { sessionStorage.setItem('gcal_state', state); } catch (e) {}
+  location.href = 'https://accounts.google.com/o/oauth2/v2/auth'
+    + '?client_id=' + encodeURIComponent(GCAL_CLIENT_ID)
+    + '&redirect_uri=' + encodeURIComponent(sonosRedirectUri())
+    + '&response_type=code&scope=' + encodeURIComponent(GCAL_SCOPES)
+    + '&access_type=offline&prompt=consent&include_granted_scopes=true&state=' + state;
+}
+
+async function handleGoogleRedirect() {
+  const p = new URLSearchParams(location.search);
+  const code = p.get('code'); const state = p.get('state') || '';
+  if (!code || !state.startsWith('gcal_')) return;
+  let saved = ''; try { saved = sessionStorage.getItem('gcal_state') || ''; } catch (e) {}
+  if (saved && saved !== state) { history.replaceState({}, '', sonosRedirectUri()); return; }
+  try {
+    const res = await fetch(getProxyUrl() + '/google/token', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ grant_type: 'authorization_code', code, redirect_uri: sonosRedirectUri(), client_id: GCAL_CLIENT_ID }) });
+    const t = await res.json();
+    if (t.access_token) {
+      localStorage.setItem('gcal_token_v2', JSON.stringify({ access_token: t.access_token, refresh_token: t.refresh_token || '', expires_at: Date.now() + (t.expires_in || 3600) * 1000 }));
+      localStorage.setItem('gcal_consented', '1'); gcalHasConsented = true;
+      gcalToken = t.access_token;
+      if (gapiInited) { gapi.client.setToken({ access_token: gcalToken }); fetchCalendarList(); fetchCalendarEvents(); }
+      updateCalendarSettingsUI();
+      toast('Calendar connected — for good this time!');
+    } else {
+      toast('Calendar connect failed' + (t.error ? ': ' + t.error : '') + ' — is GOOGLE_CLIENT_SECRET set on the Worker?');
+    }
+  } catch (e) { toast('Calendar connect error: ' + e.message); }
+  history.replaceState({}, '', sonosRedirectUri());
+}
+
+async function ensureGcalToken() {
+  const t = gcalV2Tokens();
+  if (!t || !t.refresh_token) return null; // old-style connection — legacy path below handles it
+  if (t.expires_at && Date.now() < t.expires_at - 120000) {
+    gcalToken = t.access_token;
+    if (gapiInited) gapi.client.setToken({ access_token: gcalToken });
+    return t.access_token;
+  }
+  try {
+    const res = await fetch(getProxyUrl() + '/google/token', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ grant_type: 'refresh_token', refresh_token: t.refresh_token, client_id: GCAL_CLIENT_ID }) });
+    const nt = await res.json();
+    if (nt.access_token) {
+      t.access_token = nt.access_token;
+      t.expires_at = Date.now() + (nt.expires_in || 3600) * 1000;
+      localStorage.setItem('gcal_token_v2', JSON.stringify(t));
+      gcalToken = t.access_token;
+      if (gapiInited) gapi.client.setToken({ access_token: gcalToken });
+      return t.access_token;
+    }
+  } catch (e) { console.log('GCal refresh failed:', e); }
+  return t.access_token;
 }
 
 function disconnectGoogleCalendar() {
@@ -1613,6 +1682,7 @@ function disconnectGoogleCalendar() {
   gcalEvents = [];
   gcalCalendars = [];
   localStorage.removeItem('gcal_token');
+  localStorage.removeItem('gcal_token_v2');
   localStorage.removeItem('gcal_selected_id');
   localStorage.removeItem('gcal_consented');
   gcalHasConsented = false;
@@ -1624,6 +1694,7 @@ function disconnectGoogleCalendar() {
 }
 
 async function fetchCalendarList() {
+  await ensureGcalToken();
   if (!gcalToken || !gapiInited) return;
   try {
     const response = await gapi.client.calendar.calendarList.list({ showHidden: false });
@@ -1663,6 +1734,7 @@ function selectCalendar(calId) {
 }
 
 async function fetchCalendarEvents() {
+  await ensureGcalToken();
   if (!gcalToken || !gapiInited) return;
   try {
     const now = new Date();
@@ -6548,7 +6620,7 @@ function loadSonosSettings() { const el = document.getElementById('sonosClientId
 function connectSonos() {
   const cid = getSonosClientId();
   if (!cid) { setSonosStatus('Add your Sonos Client ID first.'); toast('Add your Sonos Client ID first'); return; }
-  const state = anovaUuid();
+  const state = 'sonos_' + anovaUuid();
   try { sessionStorage.setItem('sonos_state', state); } catch (e) {}
   location.href = 'https://api.sonos.com/login/v3/oauth?client_id=' + encodeURIComponent(cid) +
     '&response_type=code&state=' + state + '&scope=playback-control-all&redirect_uri=' + encodeURIComponent(sonosRedirectUri());
@@ -6557,8 +6629,10 @@ function connectSonos() {
 async function handleSonosRedirect() {
   const p = new URLSearchParams(location.search);
   const code = p.get('code'); if (!code) return;
+  const state = p.get('state') || '';
+  if (!state.startsWith('sonos_')) return; // not ours (e.g. a Google Calendar redirect)
   let saved = ''; try { saved = sessionStorage.getItem('sonos_state') || ''; } catch (e) {}
-  if (saved && p.get('state') && saved !== p.get('state')) { history.replaceState({}, '', sonosRedirectUri()); return; }
+  if (saved && saved !== state) { history.replaceState({}, '', sonosRedirectUri()); return; }
   try {
     const res = await fetch(getProxyUrl() + '/sonos/token', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ grant_type: 'authorization_code', code, redirect_uri: sonosRedirectUri() }) });
@@ -6727,13 +6801,14 @@ if(familyCode) {
 }
 
 // Show which version this device is actually running (Settings → Sync card)
-const APP_VERSION = 'v56'; // keep in step with sw.js CACHE_NAME
+const APP_VERSION = 'v57'; // keep in step with sw.js CACHE_NAME
 (function(){ const el = document.getElementById('appVersion'); if (el) el.textContent = 'App version: ' + APP_VERSION; })();
 
 // Auto-connect to Anova on load if a token is set, so devices are ready everywhere
 if (anovaConfigured()) { try { anovaConnect(); } catch (e) {} }
 
 // Complete a Sonos OAuth redirect if we came back with ?code
+try { handleGoogleRedirect(); } catch (e) {}
 try { handleSonosRedirect(); } catch (e) {}
 
 // Resume kitchen display mode after a reload (e.g. dedicated iPad)

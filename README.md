@@ -190,7 +190,11 @@ Browser can't call the Anthropic API directly (CORS). A tiny Cloudflare Worker (
 2. Go to **Settings → Pages → Source: main branch**
 3. Your app will be live at `https://yourusername.github.io/repo-name/`
 
-### 3. Claude AI (optional — enables smart features)
+### 3. Claude AI + OAuth routes (the Worker)
+
+`claude-worker.js` is one Cloudflare Worker that handles three jobs: proxying the Anthropic API (with `ANTHROPIC_API_KEY` as a Secret), exchanging/refreshing Google Calendar tokens (`GOOGLE_CLIENT_SECRET`), and exchanging/refreshing + proxying Sonos (`SONOS_CLIENT_ID`, `SONOS_CLIENT_SECRET`, from [integration.sonos.com](https://integration.sonos.com) — register the app URL as the redirect URI there). Paste the file over the existing worker and add whichever secrets you use.
+
+### 3b. Claude AI (optional — enables smart features)
 
 1. Get an API key from [console.anthropic.com](https://console.anthropic.com)
 2. Deploy `claude-worker.js` to [Cloudflare Workers](https://dash.cloudflare.com) (free tier, 100k requests/day):
@@ -212,8 +216,9 @@ Browser can't call the Anthropic API directly (CORS). A tiny Cloudflare Worker (
 1. Create a project in [Google Cloud Console](https://console.cloud.google.com)
 2. Enable the **Google Calendar API**
 3. Create an **OAuth 2.0 Client ID** (Web application type)
-4. Add your GitHub Pages URL as an authorized JavaScript origin
+4. Add your GitHub Pages URL as an authorized JavaScript origin, AND add the full app URL (e.g. `https://you.github.io/repo-name/`) under **Authorized redirect URIs**
 5. Replace the `GCAL_CLIENT_ID` in `index.html` with your client ID
+6. For a connection that survives more than an hour: copy the OAuth client's **Client secret** and add it to the Cloudflare Worker as a Secret named `GOOGLE_CLIENT_SECRET` (see `claude-worker.js`). The app then uses refresh tokens through the Worker and stays connected indefinitely. Without it, the app falls back to the old hourly browser flow.
 
 ### 5. USDA Nutrition API (optional)
 
