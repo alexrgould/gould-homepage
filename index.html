@@ -5445,9 +5445,18 @@ function unlockAudio() {
   if (!_alarmAudioUnlocked) {
     try {
       if (!_alarmAudio) { _alarmAudio = new Audio(ALARM_SOUND); _alarmAudio.loop = true; _alarmAudio.setAttribute('playsinline', ''); }
+      // Mute the priming play. iOS only cares that play() happened inside a
+      // user gesture, not that it was audible — so this unlocks the element
+      // while guaranteeing silence, instead of racing a pause against the
+      // audio's leading silence (which leaked a chime on app open).
+      _alarmAudio.muted = true;
       const p = _alarmAudio.play();
-      const settle = () => { try { _alarmAudio.pause(); _alarmAudio.currentTime = 0; } catch (e) {} _alarmAudioUnlocked = true; };
-      if (p && p.then) p.then(settle).catch(() => {}); else settle();
+      const settle = () => {
+        try { _alarmAudio.pause(); _alarmAudio.currentTime = 0; } catch (e) {}
+        _alarmAudio.muted = false;
+        _alarmAudioUnlocked = true;
+      };
+      if (p && p.then) p.then(settle).catch(() => { _alarmAudio.muted = false; }); else settle();
     } catch (e) {}
   }
 }
@@ -5489,7 +5498,7 @@ function startAlarm(label) {
   }
   // Main channel: the looping bell through the unlocked <audio> element
   try {
-    if (_alarmAudio) { _alarmAudio.currentTime = 0; const p = _alarmAudio.play(); if (p && p.catch) p.catch(() => {}); }
+    if (_alarmAudio) { _alarmAudio.muted = false; _alarmAudio.currentTime = 0; const p = _alarmAudio.play(); if (p && p.catch) p.catch(() => {}); }
   } catch (e) {}
   const ring = () => {
     if (Date.now() > _alarmUntil) { stopAlarm(); return; }
@@ -6876,7 +6885,7 @@ if(familyCode) {
 }
 
 // Show which version this device is actually running (Settings → Sync card)
-const APP_VERSION = 'v60'; // keep in step with sw.js CACHE_NAME
+const APP_VERSION = 'v61'; // keep in step with sw.js CACHE_NAME
 (function(){ const el = document.getElementById('appVersion'); if (el) el.textContent = 'App version: ' + APP_VERSION; })();
 
 // Auto-connect to Anova on load if a token is set, so devices are ready everywhere
