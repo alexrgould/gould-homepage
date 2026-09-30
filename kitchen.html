@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Kitchen">
+<link rel="manifest" href="kitchen-manifest.json">
+<meta name="theme-color" content="#faf6ef">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@400;600&display=optional" rel="stylesheet">
+<title>Gould Kitchen</title>
+
+<!-- Same Firebase + Google Calendar setup as the main app -->
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://apis.google.com/js/api.js" async defer></script>
+<link rel="stylesheet" href="app.css">
+<style>
+body { background: var(--bg); overflow: hidden; }
+#kitchenSetup { display: none; position: fixed; inset: 0; align-items: center; justify-content: center; flex-direction: column; gap: 14px; padding: 24px; text-align: center; }
+#kitchenSetup h1 { font-family: var(--serif); font-size: 34px; }
+#kitchenSetup p { font-size: 17px; color: var(--text-secondary); max-width: 420px; }
+</style>
+</head>
+<body>
+<div id="alarmBanner" onclick="stopAlarm()">
+  <div class="ab-text" id="alarmBannerText"></div>
+  <div class="ab-sub">Tap to dismiss</div>
+</div>
+
+<!-- Shown only if this device hasn't joined a family yet -->
+<div id="kitchenSetup">
+  <h1>Kitchen display</h1>
+  <p>This device isn't connected to your family yet. Open the main app once, enter your family code, then come back here.</p>
+  <a class="btn btn-primary" href="./">Open the main app</a>
+</div>
+
+<!-- FRIDGE DISPLAY MODE -->
+<div id="fridgeMode">
+  <div class="fm-top">
+    <div class="fm-time">
+      <div class="fm-greeting" id="fmGreeting"></div>
+      <div class="fm-clock" id="fmClock"></div>
+      <div class="fm-date" id="fmDate"></div>
+    </div>
+    <div class="fm-weather-hero" id="fmWeatherHero"></div>
+  </div>
+  <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:10px;flex-wrap:wrap;">
+    <div id="fmSonosRow" style="display:flex;gap:10px;"></div>
+    <button class="fm-app-chip" onclick="openFridgeAppliances()">🔥 Appliances</button>
+    <a class="fm-app-chip" href="./" style="text-decoration:none;">Full app</a>
+  </div>
+  <div class="fm-forecast" id="fmForecast"></div>
+  <div class="fm-grid" id="fmGrid"></div>
+  <div class="fm-fact" id="fmFact" style="display:none;"></div>
+</div>
+
+<!-- KITCHEN DISPLAY — AMBIENT SCREENSAVER -->
+<div id="fmAmbient" onpointerdown="wakeFridgeMode(event)">
+  <div class="fma-block" id="fmaBlock">
+    <div class="fma-clock" id="fmaClock"></div>
+    <div class="fma-date" id="fmaDate"></div>
+    <div class="fma-line" id="fmaLine"></div>
+  </div>
+</div>
+
+<!-- KITCHEN DISPLAY — APPLIANCE PANEL (beta) -->
+<div id="fmAppPanel">
+  <div class="fmap-top">
+    <button class="fmap-back" onclick="closeFridgeAppliances()">&larr; Kitchen</button>
+    <div class="fmap-title">Appliances <span style="font-size:12px;font-weight:600;color:var(--purple);background:var(--purple-light);padding:2px 8px;border-radius:999px;vertical-align:middle;">BETA</span></div>
+    <span style="width:90px;"></span>
+  </div>
+  <div id="fmAppStatus" style="font-size:14px;color:var(--text-secondary);margin-bottom:14px;"></div>
+  <div id="fmAppDevices"></div>
+</div>
+
+<!-- KITCHEN DISPLAY — SONOS PANEL -->
+<div id="fmSonosPanel">
+  <div class="fmap-top">
+    <button class="fmap-back" onclick="closeFridgeSonos()">&larr; Kitchen</button>
+    <div class="fmap-title">Music</div>
+    <span style="width:90px;"></span>
+  </div>
+  <div id="fmSonosBody" style="max-width:560px;margin:0 auto;"></div>
+</div>
+
+<!-- COOK MODE -->
+<div id="cookMode">
+  <div class="cook-header">
+    <div class="cook-title" id="cookTitle"></div>
+    <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+      <button class="cook-add-btn" id="cookVoiceBtn" onclick="toggleCookVoice()" title="Voice control">🎤</button>
+      <button class="cook-add-btn" id="cookIngrBtn" onclick="toggleCookIngredients(true)">🧾 Ingredients</button>
+      <button style="background:none;border:none;font-size:26px;color:var(--text-secondary);padding:4px 8px;" onclick="closeCookMode()">&times;</button>
+    </div>
+  </div>
+  <div class="cook-progress" id="cookProgress"></div>
+  <div class="cook-body">
+    <div class="cook-step" id="cookStep"></div>
+    <div id="cookIngrPanel">
+      <h3>Ingredients</h3>
+      <div class="cook-ingr-sub">Tap to check off · highlighted = this step</div>
+      <div class="cook-ingr-list" id="cookIngrListPanel"></div>
+    </div>
+  </div>
+  <div class="cook-timers-bar">
+    <div class="cook-timers" id="cookTimers"></div>
+    <div class="cook-timer-add">
+      <button class="cook-add-btn" onclick="toggleTimerPresets()">＋ Timer</button>
+      <button class="cook-add-btn" onclick="runSonosScene('cooking')">🎵 Music</button>
+      <div class="timer-presets" id="timerPresets" style="display:none;">
+        <button onclick="addCookTimer(1)">1m</button>
+        <button onclick="addCookTimer(3)">3m</button>
+        <button onclick="addCookTimer(5)">5m</button>
+        <button onclick="addCookTimer(10)">10m</button>
+        <button onclick="addCookTimer(15)">15m</button>
+        <button onclick="testAlarm()" style="color:var(--accent);">🔔 Test</button>
+        <input type="number" id="customTimerMin" min="1" inputmode="numeric" placeholder="min" style="width:64px;">
+        <button onclick="addCustomTimer()">Start</button>
+      </div>
+    </div>
+  </div>
+  <div class="cook-nav">
+    <button id="cookPrevBtn" onclick="cookPrev()">&larr; Back</button>
+    <button id="cookNextBtn" class="primary" onclick="cookNext()">Next &rarr;</button>
+  </div>
+  <div id="cookIngrOverlay">
+    <div class="cook-ingr-ov-head">
+      <h3>Ingredients</h3>
+      <button style="background:none;border:none;font-size:26px;color:var(--text-secondary);padding:4px 8px;" onclick="toggleCookIngredients(false)">&times;</button>
+    </div>
+    <div class="cook-ingr-sub">Tap to check off as you gather</div>
+    <div class="cook-ingr-list" id="cookIngrListOverlay"></div>
+    <button class="cook-ingr-back" id="cookIngrBackBtn" onclick="toggleCookIngredients(false)">&larr; Back to steps</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>window.KITCHEN_PAGE = true;</script>
+<script src="app.js"></script>
+</body>
+</html>

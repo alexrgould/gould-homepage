@@ -1,7 +1,11 @@
-const CACHE_NAME = 'meal-planner-v61';
+const CACHE_NAME = 'meal-planner-v62';
 const ASSETS = [
   './index.html',
-  './manifest.json'
+  './manifest.json',
+  './app.css',
+  './app.js',
+  './kitchen.html',
+  './kitchen-manifest.json'
 ];
 
 self.addEventListener('install', event => {
