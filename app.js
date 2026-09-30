@@ -1,0 +1,5751 @@
+// ===========================================================================
+// FIREBASE CONFIG — Replace with your own from Firebase Console
+// ===========================================================================
+// SETUP: Go to https://console.firebase.google.com
+// 1. Create a project (free)
+// 2. Go to Firestore Database → Create database → Start in test mode
+// 3. Go to Project Settings → Your apps → Add web app
+// 4. Copy the config object and paste it below
+const firebaseConfig = {
+  apiKey: "AIzaSyAiVqsHb1IvnAbYP4uE--9f-bFWl1ScweE",
+  authDomain: "family-home-page.firebaseapp.com",
+  projectId: "family-home-page",
+  storageBucket: "family-home-page.firebasestorage.app",
+  messagingSenderId: "91303889241",
+  appId: "1:91303889241:web:666bfbc65e54370ea3a448"
+};
+
+let db = null;
+let unsubscribe = null;
+let firebaseReady = false;
+
+function initFirebase() {
+  try {
+    if (firebaseConfig.apiKey === 'YOUR_API_KEY') {
+      console.log('Firebase not configured — using localStorage only');
+      return false;
+    }
+    firebase.initializeApp(firebaseConfig);
+    db = firebase.firestore();
+    // Enable offline persistence so it works without connectivity
+    db.enablePersistence({ synchronizeTabs: true }).catch(e => console.log('Persistence:', e.code));
+    firebaseReady = true;
+    return true;
+  } catch(e) { console.log('Firebase init failed:', e); return false; }
+}
+
+// ===========================================================================
+// DATA
+// ===========================================================================
+const CATEGORIES = ['Produce','Meat & Seafood','Dairy','Bakery','Pantry','Frozen','Beverages','Other'];
+const DEFAULT_CUISINES = ['American','Mexican','Italian','Asian','Mediterranean','Indian','Southern','Comfort Food','Salads & Light','Other'];
+function getCuisines() { return (data.cuisines && data.cuisines.length) ? data.cuisines : DEFAULT_CUISINES; }
+function ensureDD() { if(!data.doordash) data.doordash={}; if(!data.doordash.orders) data.doordash.orders=[]; if(!data.doordash.restaurants) data.doordash.restaurants=[]; if(!data.doordash.monthlyBudget&&data.doordash.monthlyBudget!==0) data.doordash.monthlyBudget=150; if(!data.doordash.monthlyTarget&&data.doordash.monthlyTarget!==0) data.doordash.monthlyTarget=4; return data.doordash; }
+function emptyData() { return { recipes: [], mealPlan: {}, staples: [], checkedItems: {}, children: [], cuisines: [...DEFAULT_CUISINES], usageHistory: [], doordash: { orders: [], monthlyBudget: 150, monthlyTarget: 4 }, consequences: [], groceryExtras: [], blogs: [], factHistory: [] }; }
+// kitchen.html sets window.KITCHEN_PAGE before loading this file
+const IS_KITCHEN = !!window.KITCHEN_PAGE;
+let data = emptyData();
+let familyCode = null;
+let currentWeekStart = getMonday(new Date());
+let cuisineFilters = {}; // tracks user's cuisine selection per day key
+let currentDetailId = null;
+let tipIndex = 0;
+let saveTimer = null;
+
+function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+function getMonday(d) { d = new Date(d); const day = d.getDay(); d.setDate(d.getDate() - day + (day === 0 ? -6 : 1)); d.setHours(0,0,0,0); return d; }
+function fmtDate(d) { return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); }
+function dateKey(d) { const p = n => String(n).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); }
+function genCode() { const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let c = ''; for (let i = 0; i < 10; i++) c += chars[Math.floor(Math.random() * chars.length)]; return c; }
+
+// Persist to localStorage as offline backup
+function persistLocal() { try { localStorage.setItem('mp_data', JSON.stringify(data)); localStorage.setItem('mp_family', familyCode); } catch(e) {} }
+function loadLocal() {
+  try {
+    const s = localStorage.getItem('mp_data'); if (s) data = JSON.parse(s);
+    familyCode = localStorage.getItem('mp_family');
+  } catch(e) {}
+}
+
+// Save to Firebase (debounced)
+let savePending = false;
+const SYNC_FIELDS = ['recipes','mealPlan','staples','children','checkedItems','cuisines','usageHistory','doordash','consequences','groceryExtras','blogs','factHistory'];
+// Last state we saved or received per field (JSON strings). Used to write only
+// changed sections, so two devices editing different things don't clobber each other.
+let _lastSynced = {};
+
+function _syncFieldValue(f) {
+  if (f === 'mealPlan' || f === 'checkedItems') return data[f] || {};
+  if (f === 'cuisines') return data.cuisines || [...DEFAULT_CUISINES];
+  if (f === 'doordash') return data.doordash || { orders: [], monthlyBudget: 150, monthlyTarget: 4 };
+  return data[f] || [];
+}
+
+function persist() {
+  persistLocal();
+  savePending = true;
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(async () => {
+    try { await saveToFirebase(); } finally { savePending = false; }
+  }, 600);
+}
+
+async function saveToFirebase() {
+  if (!firebaseReady || !familyCode || !db) return;
+  await authReady();
+  const docRef = db.collection('families').doc(familyCode);
+  // Collect only the sections that changed since the last save/snapshot
+  const payload = {};
+  SYNC_FIELDS.forEach(f => {
+    const str = JSON.stringify(_syncFieldValue(f));
+    if (_lastSynced[f] !== str) payload[f] = _syncFieldValue(f);
+  });
+  if (!Object.keys(payload).length) return;
+  payload.updatedAt = firebase.firestore.FieldValue.serverTimestamp();
+  try {
+    // update() replaces only the named fields — other devices' edits to other
+    // sections survive, and the post-save snapshot brings their changes in
+    await docRef.update(payload);
+  } catch(e) {
+    // Doc doesn't exist yet (new family) — create it with a full write
+    try {
+      const full = {};
+      SYNC_FIELDS.forEach(f => { full[f] = _syncFieldValue(f); });
+      full.updatedAt = firebase.firestore.FieldValue.serverTimestamp();
+      await docRef.set(full);
+    } catch(e2) { console.log('Save failed:', e2); return; }
+  }
+  // Mark everything we just wrote as synced
+  SYNC_FIELDS.forEach(f => { _lastSynced[f] = JSON.stringify(_syncFieldValue(f)); });
+}
+
+// --- Anonymous auth ---
+// Lets Firestore rules require request.auth != null. Backward compatible: if
+// Anonymous sign-in isn't enabled in the Firebase console, this resolves after
+// a short timeout and everything works exactly as before (with open rules).
+let _authReadyPromise = null;
+function authReady() {
+  if (!_authReadyPromise) {
+    _authReadyPromise = new Promise(res => {
+      if (!firebaseReady || !firebase.auth) return res();
+      let settled = false;
+      const finish = () => { if (!settled) { settled = true; res(); } };
+      setTimeout(finish, 3000);
+      try {
+        firebase.auth().onAuthStateChanged(u => { if (u) finish(); });
+        firebase.auth().signInAnonymously().catch(e => { console.log('Anon auth:', e.code); finish(); });
+      } catch (e) { finish(); }
+    });
+  }
+  return _authReadyPromise;
+}
+
+// --- Automatic daily backups ---
+// Snapshots the whole data object to families/{code}/backups/{date} once per
+// day per device, keeps the newest 14. Restore UI lives in Settings.
+async function backupIfNeeded() {
+  if (!firebaseReady || !familyCode || !db) return;
+  const today = dateKey(new Date());
+  const marker = 'mp_backup_' + familyCode;
+  if (localStorage.getItem(marker) === today) return;
+  // Never snapshot an empty book over a real one (e.g. first load on a new device)
+  if (!data.recipes.length && !Object.keys(data.mealPlan || {}).length) return;
+  try {
+    await authReady();
+    const payload = {};
+    SYNC_FIELDS.forEach(f => { payload[f] = _syncFieldValue(f); });
+    payload.savedAt = firebase.firestore.FieldValue.serverTimestamp();
+    const col = db.collection('families').doc(familyCode).collection('backups');
+    await col.doc(today).set(payload);
+    localStorage.setItem(marker, today);
+    const snap = await col.get();
+    const ids = snap.docs.map(d => d.id).sort();
+    for (const id of ids.slice(0, Math.max(0, ids.length - 14))) await col.doc(id).delete();
+    console.log('[Backup] Saved', today);
+  } catch (e) { console.log('Backup failed:', e); }
+}
+
+async function renderBackupsList() {
+  const el = document.getElementById('backupsList'); if (!el) return;
+  if (!firebaseReady || !familyCode || !db) { el.innerHTML = '<p style="font-size:12px;color:var(--text-secondary);">Backups need Firebase sync.</p>'; return; }
+  el.innerHTML = '<div class="skel" style="width:70%;"></div>';
+  try {
+    await authReady();
+    const snap = await db.collection('families').doc(familyCode).collection('backups').get();
+    const docs = snap.docs.sort((a, b) => b.id.localeCompare(a.id));
+    if (!docs.length) { el.innerHTML = '<p style="font-size:12px;color:var(--text-secondary);">No backups yet — one is saved automatically each day the app is opened.</p>'; return; }
+    el.innerHTML = docs.map(d => {
+      const b = d.data();
+      return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px;">
+        <span><strong>${esc(d.id)}</strong> · ${(b.recipes || []).length} recipes · ${Object.keys(b.mealPlan || {}).length} planned days</span>
+        <button class="btn btn-secondary btn-sm" onclick="restoreBackup('${esc(d.id)}')">Restore</button>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    if (e.code === 'permission-denied') {
+      el.innerHTML = `<p style="font-size:12px;color:var(--text-secondary);">Backups need a one-time Firebase setup (about 2 minutes):</p>
+        <ol style="font-size:12px;color:var(--text-secondary);padding-left:18px;margin:6px 0;line-height:1.6;">
+          <li>Firebase console → Build → <strong>Authentication</strong> → Sign-in method → enable <strong>Anonymous</strong></li>
+          <li>Firestore Database → <strong>Rules</strong> → paste <code>firestore.rules</code> from the repo → Publish</li>
+        </ol>
+        <p style="font-size:12px;color:var(--text-secondary);">Do them in that order. Everything else keeps working meanwhile — your data is safe, it just isn't being snapshotted yet.</p>`;
+    } else {
+      el.innerHTML = `<p style="font-size:12px;color:var(--red);">Could not load backups: ${esc(e.message)}</p>`;
+    }
+  }
+}
+
+async function restoreBackup(id) {
+  if (!confirm('Restore the backup from ' + id + '? Current data will be replaced on every device. (Today\'s backup still exists if you change your mind.)')) return;
+  try {
+    await authReady();
+    const doc = await db.collection('families').doc(familyCode).collection('backups').doc(id).get();
+    if (!doc.exists) { toast('Backup not found'); return; }
+    const b = doc.data();
+    SYNC_FIELDS.forEach(f => { if (b[f] !== undefined) data[f] = b[f]; });
+    persistLocal();
+    await saveToFirebase();
+    toast('Restored backup from ' + id + ' — reloading…');
+    setTimeout(() => location.reload(), 900);
+  } catch (e) { toast('⚠️ Restore failed: ' + e.message); }
+}
+
+// Listen for real-time changes from other devices
+function startListening() {
+  if (!firebaseReady || !familyCode || !db) return;
+  authReady().then(() => { startListeningNow(); });
+}
+function startListeningNow() {
+  if (unsubscribe) unsubscribe();
+  unsubscribe = db.collection('families').doc(familyCode).onSnapshot(doc => {
+    if (!doc.exists) return;
+    // Skip incoming snapshots while a local save is in flight — prevents race condition
+    // where old remote data overwrites a recent local change before it's been saved
+    if (savePending) { console.log('[Sync] Skipping snapshot — local save pending'); return; }
+    const remote = doc.data();
+    // Record the remote state so the next save only writes truly-changed sections
+    SYNC_FIELDS.forEach(f => { if (remote[f] !== undefined) _lastSynced[f] = JSON.stringify(remote[f]); });
+    // Only update if data actually changed (avoid echo from our own save)
+    const remoteStr = JSON.stringify({ r: remote.recipes, m: remote.mealPlan, s: remote.staples, c: remote.children, ci: remote.checkedItems, cu: remote.cuisines, uh: remote.usageHistory, dd: remote.doordash, cq: remote.consequences, ge: remote.groceryExtras, bl: remote.blogs, fh: remote.factHistory });
+    const localStr = JSON.stringify({ r: data.recipes, m: data.mealPlan, s: data.staples, c: data.children, ci: data.checkedItems, cu: data.cuisines, uh: data.usageHistory, dd: data.doordash, cq: data.consequences, ge: data.groceryExtras, bl: data.blogs, fh: data.factHistory });
+    if (remoteStr !== localStr) {
+      data.recipes = remote.recipes || [];
+      data.mealPlan = remote.mealPlan || {};
+      data.staples = remote.staples || [];
+      data.children = remote.children || [];
+      data.checkedItems = remote.checkedItems || {};
+      data.cuisines = remote.cuisines || [...DEFAULT_CUISINES];
+      data.usageHistory = remote.usageHistory || [];
+      data.doordash = remote.doordash || { orders: [], monthlyBudget: 150, monthlyTarget: 4 };
+      data.consequences = remote.consequences || [];
+      data.groceryExtras = remote.groceryExtras || [];
+      data.blogs = remote.blogs || [];
+      data.factHistory = remote.factHistory || [];
+      persistLocal();
+      refreshCurrentView();
+      if (fridgeOpen()) renderFridgeMode();
+    }
+  }, err => console.log('Listen error:', err));
+}
+
+function refreshCurrentView() {
+  const active = document.querySelector('.view.active');
+  if (active) showView(active.id.replace('view-', ''));
+}
+
+// ===========================================================================
+// FAMILY SETUP
+// ===========================================================================
+function showSetup() {
+  document.getElementById('setupScreen').style.display = 'flex';
+  document.getElementById('appShell').style.display = 'none';
+  document.getElementById('newFamilyCode').textContent = genCode();
+}
+
+function showApp() {
+  document.getElementById('setupScreen').style.display = 'none';
+  document.getElementById('appShell').style.display = 'flex';
+  showView('home');
+}
+
+async function createFamily() {
+  familyCode = document.getElementById('newFamilyCode').textContent;
+  data = emptyData();
+  persistLocal();
+  if (firebaseReady) {
+    await saveToFirebase();
+    startListening();
+  }
+  showApp();
+  toast('Family created! Share code: ' + familyCode);
+}
+
+async function joinFamily() {
+  const code = document.getElementById('joinCode').value.trim().toUpperCase();
+  if (code.length < 4) { toast('Please enter the family code'); return; }
+  familyCode = code;
+  persistLocal();
+  if (firebaseReady) {
+    // Try to load existing data
+    try {
+      const doc = await db.collection('families').doc(familyCode).get();
+      if (doc.exists) {
+        const remote = doc.data();
+        data.recipes = remote.recipes || [];
+        data.mealPlan = remote.mealPlan || {};
+        data.staples = remote.staples || [];
+        data.children = remote.children || [];
+        data.checkedItems = remote.checkedItems || {};
+        data.cuisines = remote.cuisines || [...DEFAULT_CUISINES];
+        data.usageHistory = remote.usageHistory || [];
+        data.doordash = remote.doordash || { orders: [], monthlyBudget: 150, monthlyTarget: 4 };
+        data.consequences = remote.consequences || [];
+        data.groceryExtras = remote.groceryExtras || [];
+        data.blogs = remote.blogs || [];
+        persistLocal();
+      }
+    } catch(e) { console.log('Join fetch failed:', e); }
+    startListening();
+  }
+  showApp();
+  toast('Joined family ' + familyCode + '!');
+}
+
+function leaveFamily() {
+  if (!confirm('Disconnect from this family? Your data will stay on the server for your partner.')) return;
+  if (unsubscribe) unsubscribe();
+  familyCode = null;
+  data = emptyData();
+  localStorage.removeItem('mp_data');
+  localStorage.removeItem('mp_family');
+  showSetup();
+}
+
+// ===========================================================================
+// VIEW SWITCHING
+// ===========================================================================
+function showView(name) {
+  const target = document.getElementById('view-' + name);
+  // Re-renders of the already-visible view (weather/calendar/sync refreshes) must NOT
+  // touch the classes — re-adding .active restarts entrance animations and flickers
+  if (!target.classList.contains('active')) {
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+    target.classList.add('active');
+    document.getElementById('nav-' + name).classList.add('active');
+  }
+  if (name === 'home') renderHome();
+  if (name === 'recipes') { renderRecipes(); if (!blogFeedCache.items || Date.now() - (blogFeedCache.fetchedAt||0) > 300000) fetchBlogFeeds(); else renderBlogFeed(blogFeedCache.items); }
+  if (name === 'plan') renderMealPlan();
+  if (name === 'grocery') renderGrocery();
+  if (name === 'staples') renderStaples();
+  if (name === 'sync') { renderDoorDashSettings(); updateCalendarSettingsUI(); renderCuisines(); renderSync(); renderKids(); renderBlogsList(); renderBackupsList(); const nk=document.getElementById('nutritionApiKey'); if(nk) nk.value=localStorage.getItem('nutrition_api_key')||''; loadClaudeSettings(); loadParentingPhilosophy(); loadFridgeSettings(); loadAnovaPat(); loadSonosSettings(); loadWeatherSettings(); }
+}
+
+// ===========================================================================
+// HOME
+// ===========================================================================
+// ===========================================================================
+// GOOGLE CALENDAR INTEGRATION
+// ===========================================================================
+const GCAL_CLIENT_ID = '91303889241-23dfcrg1g0tc7f1p1bgc9p8p9htq40cd.apps.googleusercontent.com';
+const GCAL_SCOPES = 'https://www.googleapis.com/auth/calendar.readonly';
+let gcalToken = null;
+let gcalEvents = [];
+let gcalCalendars = [];
+let gcalSelectedIds = (function() {
+  // Multi-calendar. Migrates the old single-calendar setting automatically.
+  try {
+    const multi = JSON.parse(localStorage.getItem('gcal_selected_ids') || 'null');
+    if (Array.isArray(multi) && multi.length) return multi;
+  } catch (e) {}
+  const single = localStorage.getItem('gcal_selected_id');
+  return single ? [single] : ['primary'];
+})();
+function saveSelectedCalendars() { try { localStorage.setItem('gcal_selected_ids', JSON.stringify(gcalSelectedIds)); } catch (e) {} }
+let gcalTokenClient = null;
+let gapiInited = false;
+let gisInited = false;
+
+let gcalHasConsented = !!localStorage.getItem('gcal_consented');
+
+function initGapi() {
+  gapi.load('client', async () => {
+    await gapi.client.init({});
+    await gapi.client.load('https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest');
+    gapiInited = true;
+    // Durable (refresh-token) connection takes priority
+    if (gcalV2Tokens()) {
+      await ensureGcalToken();
+      if (gcalToken) { fetchCalendarList(); fetchCalendarEvents(); }
+      updateCalendarSettingsUI();
+      return;
+    }
+    const stored = localStorage.getItem('gcal_token');
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        if (parsed.expires_at && parsed.expires_at > Date.now()) {
+          gcalToken = parsed.access_token;
+          gapi.client.setToken({ access_token: gcalToken });
+          fetchCalendarList();
+          fetchCalendarEvents();
+        } else if (gcalHasConsented && gisInited) {
+          // Token expired but user previously consented — silently refresh
+          silentTokenRefresh();
+        } else { localStorage.removeItem('gcal_token'); }
+      } catch(e) { localStorage.removeItem('gcal_token'); }
+    } else if (gcalHasConsented && gisInited) {
+      // No stored token but user previously connected — try silent refresh
+      silentTokenRefresh();
+    }
+    updateCalendarSettingsUI();
+  });
+}
+
+function initGis() {
+  gcalTokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: GCAL_CLIENT_ID,
+    scope: GCAL_SCOPES,
+    callback: (response) => {
+      if (response.error) { console.log('GCal auth error:', response); return; }
+      gcalToken = response.access_token;
+      const expiresAt = Date.now() + (response.expires_in * 1000);
+      localStorage.setItem('gcal_token', JSON.stringify({ access_token: gcalToken, expires_at: expiresAt }));
+      localStorage.setItem('gcal_consented', '1');
+      gcalHasConsented = true;
+      fetchCalendarList();
+      fetchCalendarEvents();
+      updateCalendarSettingsUI();
+      toast('Calendar connected!');
+    }
+  });
+  gisInited = true;
+  // If gapi was ready first and found an expired token, try silent refresh now
+  if (gapiInited && gcalHasConsented && !gcalToken) silentTokenRefresh();
+}
+
+function silentTokenRefresh() {
+  if (!gisInited || !gcalTokenClient) return;
+  try {
+    gcalTokenClient.requestAccessToken({ prompt: '' });
+  } catch(e) { console.log('Silent token refresh failed:', e); }
+}
+
+function maybeInitGcal() {
+  if (typeof gapi !== 'undefined' && !gapiInited) initGapi();
+  if (typeof google !== 'undefined' && google.accounts && !gisInited) initGis();
+}
+let gcalInitTimer = setInterval(() => {
+  maybeInitGcal();
+  if (gapiInited && gisInited) clearInterval(gcalInitTimer);
+}, 500);
+setTimeout(() => clearInterval(gcalInitTimer), 15000);
+
+// Auto-refresh token before it expires (refresh 5 min early)
+setInterval(() => {
+  if (!gcalHasConsented || !gapiInited) return;
+  // Durable connection: the Worker renews it — no popups, no iframes
+  if (gcalV2Tokens()) { ensureGcalToken(); return; }
+  if (!gisInited) return;
+  const stored = localStorage.getItem('gcal_token');
+  if (!stored) return;
+  try {
+    const parsed = JSON.parse(stored);
+    const fiveMin = 5 * 60 * 1000;
+    if (parsed.expires_at && parsed.expires_at - Date.now() < fiveMin) {
+      silentTokenRefresh();
+    }
+  } catch(e) {}
+}, 60000);
+
+// --- Durable connection (authorization code + refresh token via the Worker) ---
+// The old browser-only flow dies every hour and its silent renewal is blocked
+// by Safari/Chrome cookie rules — that's the daily disconnect. This flow gets
+// a refresh token once, and the Worker renews access tokens forever after.
+function gcalV2Tokens() { try { return JSON.parse(localStorage.getItem('gcal_token_v2') || 'null'); } catch (e) { return null; } }
+
+function connectGoogleCalendar() {
+  const state = 'gcal_' + Math.random().toString(36).slice(2);
+  try { sessionStorage.setItem('gcal_state', state); } catch (e) {}
+  location.href = 'https://accounts.google.com/o/oauth2/v2/auth'
+    + '?client_id=' + encodeURIComponent(GCAL_CLIENT_ID)
+    + '&redirect_uri=' + encodeURIComponent(sonosRedirectUri())
+    + '&response_type=code&scope=' + encodeURIComponent(GCAL_SCOPES)
+    + '&access_type=offline&prompt=consent&include_granted_scopes=true&state=' + state;
+}
+
+async function handleGoogleRedirect() {
+  const p = new URLSearchParams(location.search);
+  const code = p.get('code'); const state = p.get('state') || '';
+  if (!code || !state.startsWith('gcal_')) return;
+  let saved = ''; try { saved = sessionStorage.getItem('gcal_state') || ''; } catch (e) {}
+  if (saved && saved !== state) { history.replaceState({}, '', sonosRedirectUri()); return; }
+  try {
+    const res = await fetch(getProxyUrl() + '/google/token', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ grant_type: 'authorization_code', code, redirect_uri: sonosRedirectUri(), client_id: GCAL_CLIENT_ID }) });
+    const t = await res.json();
+    if (t.access_token) {
+      localStorage.setItem('gcal_token_v2', JSON.stringify({ access_token: t.access_token, refresh_token: t.refresh_token || '', expires_at: Date.now() + (t.expires_in || 3600) * 1000 }));
+      localStorage.setItem('gcal_consented', '1'); gcalHasConsented = true;
+      gcalToken = t.access_token;
+      if (gapiInited) { gapi.client.setToken({ access_token: gcalToken }); fetchCalendarList(); fetchCalendarEvents(); }
+      updateCalendarSettingsUI();
+      toast('Calendar connected — for good this time!');
+    } else {
+      const msg = String(t.error || '');
+      if (/GOOGLE_CLIENT_SECRET/i.test(msg)) toast('Add GOOGLE_CLIENT_SECRET to your Cloudflare Worker, then connect again');
+      else if (/redirect_uri/i.test(msg)) toast('Google rejected the redirect URI — add ' + sonosRedirectUri() + ' to your OAuth client');
+      else if (/invalid_grant/i.test(msg)) toast('That sign-in link expired — tap Connect again');
+      else toast('Calendar connect failed' + (msg ? ': ' + msg : ''));
+    }
+  } catch (e) { toast('Calendar connect error: ' + e.message); }
+  history.replaceState({}, '', sonosRedirectUri());
+}
+
+async function ensureGcalToken() {
+  const t = gcalV2Tokens();
+  if (!t || !t.refresh_token) return null; // old-style connection — legacy path below handles it
+  if (t.expires_at && Date.now() < t.expires_at - 120000) {
+    gcalToken = t.access_token;
+    if (gapiInited) gapi.client.setToken({ access_token: gcalToken });
+    return t.access_token;
+  }
+  try {
+    const res = await fetch(getProxyUrl() + '/google/token', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ grant_type: 'refresh_token', refresh_token: t.refresh_token, client_id: GCAL_CLIENT_ID }) });
+    const nt = await res.json();
+    if (nt.access_token) {
+      t.access_token = nt.access_token;
+      t.expires_at = Date.now() + (nt.expires_in || 3600) * 1000;
+      localStorage.setItem('gcal_token_v2', JSON.stringify(t));
+      gcalToken = t.access_token;
+      if (gapiInited) gapi.client.setToken({ access_token: gcalToken });
+      return t.access_token;
+    }
+  } catch (e) { console.log('GCal refresh failed:', e); }
+  return t.access_token;
+}
+
+function disconnectGoogleCalendar() {
+  if (gcalToken) {
+    google.accounts.oauth2.revoke(gcalToken, () => {});
+  }
+  gcalToken = null;
+  gcalEvents = [];
+  gcalCalendars = [];
+  localStorage.removeItem('gcal_token');
+  localStorage.removeItem('gcal_token_v2');
+  localStorage.removeItem('gcal_selected_id');
+  localStorage.removeItem('gcal_selected_ids');
+  gcalSelectedIds = ['primary'];
+  localStorage.removeItem('gcal_consented');
+  gcalHasConsented = false;
+  try { gapi.client.setToken(null); } catch (e) {}
+  updateCalendarSettingsUI();
+  renderCalendarSummary();
+  toast('Calendar disconnected');
+}
+
+async function fetchCalendarList() {
+  await ensureGcalToken();
+  if (!gcalToken || !gapiInited) return;
+  try {
+    const response = await gapi.client.calendar.calendarList.list({ showHidden: false });
+    gcalCalendars = (response.result.items || []).map(cal => ({
+      id: cal.id,
+      name: cal.summary || cal.id,
+      primary: cal.primary || false,
+      color: cal.backgroundColor || '#4285f4'
+    }));
+    // Resolve 'primary' to its real id, and drop any calendars that vanished
+    const primary = gcalCalendars.find(c => c.primary);
+    gcalSelectedIds = gcalSelectedIds.map(id => (id === 'primary' && primary) ? primary.id : id)
+      .filter(id => gcalCalendars.find(c => c.id === id));
+    if (!gcalSelectedIds.length) gcalSelectedIds = [primary ? primary.id : (gcalCalendars[0] || {}).id].filter(Boolean);
+    saveSelectedCalendars();
+    renderCalendarPicker();
+  } catch(e) { console.log('GCal list error:', e); }
+}
+
+function renderCalendarPicker() {
+  const pickerEl = document.getElementById('calendarPicker');
+  const listEl = document.getElementById('calendarCheckList');
+  if (!pickerEl || !listEl) return;
+  if (!gcalToken || !gcalCalendars.length) { pickerEl.style.display = 'none'; return; }
+  pickerEl.style.display = 'block';
+  listEl.innerHTML = gcalCalendars.map(cal => {
+    const on = gcalSelectedIds.includes(cal.id);
+    const label = cal.primary ? cal.name + ' (primary)' : cal.name;
+    return `<label class="cal-check ${on ? 'on' : ''}">
+      <input type="checkbox" ${on ? 'checked' : ''} onchange="toggleCalendar('${esc(cal.id).replace(/'/g, "\\'")}', this.checked)">
+      <span class="cal-dot" style="background:${esc(cal.color)};"></span>
+      <span class="cal-name">${esc(label)}</span>
+    </label>`;
+  }).join('');
+}
+
+function toggleCalendar(calId, on) {
+  if (on) { if (!gcalSelectedIds.includes(calId)) gcalSelectedIds.push(calId); }
+  else {
+    gcalSelectedIds = gcalSelectedIds.filter(id => id !== calId);
+    if (!gcalSelectedIds.length) { // never leave zero selected
+      gcalSelectedIds = [calId];
+      toast('Keep at least one calendar selected');
+    }
+  }
+  saveSelectedCalendars();
+  renderCalendarPicker();
+  fetchCalendarEvents();
+}
+
+function selectCalendar(calId) { // legacy single-select entry point
+  gcalSelectedIds = [calId];
+  saveSelectedCalendars();
+  renderCalendarPicker();
+  fetchCalendarEvents();
+  toast('Calendar updated');
+}
+
+async function fetchCalendarEvents() {
+  await ensureGcalToken();
+  if (!gcalToken || !gapiInited) return;
+  const now = new Date();
+  now.setHours(0,0,0,0);
+  const today = new Date(now);
+  const dayOfWeek = today.getDay(); // 0=Sun
+  const thisSunday = new Date(today);
+  thisSunday.setDate(today.getDate() + (dayOfWeek === 0 ? 0 : 7 - dayOfWeek));
+  const nextSunday = new Date(thisSunday);
+  nextSunday.setDate(thisSunday.getDate() + 7);
+  nextSunday.setHours(23,59,59,999);
+
+  const ids = (gcalSelectedIds && gcalSelectedIds.length) ? gcalSelectedIds : ['primary'];
+  let authFailed = false;
+
+  // One request per calendar, all in flight together
+  const perCal = await Promise.all(ids.map(async calId => {
+    try {
+      const response = await gapi.client.calendar.events.list({
+        calendarId: calId,
+        timeMin: now.toISOString(),
+        timeMax: nextSunday.toISOString(),
+        singleEvents: true,
+        orderBy: 'startTime',
+        maxResults: 50
+      });
+      const meta = gcalCalendars.find(c => c.id === calId) || {};
+      return (response.result.items || []).map(ev => ({
+        title: ev.summary || '(No title)',
+        start: ev.start.dateTime || ev.start.date,
+        end: ev.end.dateTime || ev.end.date,
+        allDay: !ev.start.dateTime,
+        location: ev.location || '',
+        calId,
+        calName: meta.name || '',
+        calColor: meta.color || 'var(--blue)'
+      }));
+    } catch (e) {
+      console.log('GCal fetch error for', calId, e);
+      if (e.status === 401) authFailed = true;
+      return []; // one bad calendar must not blank out the others
+    }
+  }));
+
+  if (authFailed && !perCal.flat().length) {
+    if (gcalV2Tokens()) { await ensureGcalToken(); }
+    else if (gcalHasConsented) { gcalToken = null; localStorage.removeItem('gcal_token'); silentTokenRefresh(); }
+    else { localStorage.removeItem('gcal_token'); gcalToken = null; updateCalendarSettingsUI(); }
+    return;
+  }
+
+  // Merge, de-duplicate shared events, and sort chronologically
+  const seen = new Set();
+  gcalEvents = perCal.flat().filter(ev => {
+    const k = ev.title + '|' + ev.start;
+    if (seen.has(k)) return false;
+    seen.add(k); return true;
+  }).sort((a, b) => (a.start > b.start ? 1 : a.start < b.start ? -1 : 0));
+
+  renderCalendarSummary();
+  if (fridgeOpen()) renderFridgeMode();
+}
+
+function updateCalendarSettingsUI() {
+  const statusEl = document.getElementById('calendarStatus');
+  const btnEl = document.getElementById('calConnectBtn');
+  const pickerEl = document.getElementById('calendarPicker');
+  if (!statusEl || !btnEl) return;
+  if (gcalToken) {
+    const n = gcalSelectedIds.length;
+    const one = n === 1 ? gcalCalendars.find(c => c.id === gcalSelectedIds[0]) : null;
+    const label = one ? ' — ' + esc(one.name) : (n > 1 ? ' — ' + n + ' calendars' : '');
+    const durable = !!gcalV2Tokens();
+    statusEl.innerHTML = `<p style="font-size:13px;color:var(--green);font-weight:600;margin-bottom:8px;">Connected${label}</p>` +
+      (durable ? '' : `<p style="font-size:11px;color:var(--text-secondary);margin-bottom:8px;">Using the old hourly connection — tap Disconnect then Connect once to switch to the durable one.</p>`);
+    btnEl.textContent = 'Disconnect Calendar';
+    btnEl.onclick = disconnectGoogleCalendar;
+    btnEl.className = 'btn btn-danger btn-block';
+    if (pickerEl) pickerEl.style.display = gcalCalendars.length ? 'block' : 'none';
+    renderCalendarPicker();
+  } else {
+    statusEl.innerHTML = '';
+    btnEl.textContent = 'Connect Calendar';
+    btnEl.onclick = connectGoogleCalendar;
+    btnEl.className = 'btn btn-secondary btn-block';
+    if (pickerEl) pickerEl.style.display = 'none';
+  }
+}
+
+function renderCalendarSummary() {
+  const el = document.getElementById('homeCalendar');
+  if (!el) return;
+
+  if (!gcalToken) {
+    el.innerHTML = `<div class="card" onclick="showView('sync')" style="cursor:pointer;"><div style="font-size:12px;font-weight:600;color:var(--blue);text-transform:uppercase;margin-bottom:4px;">📅 Calendar</div><div class="card-title" style="color:var(--text-secondary);font-size:14px;">Connect Google Calendar in Settings</div></div>`;
+    return;
+  }
+
+  const today = new Date(); today.setHours(0,0,0,0);
+  const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate()+1);
+  const dayOfWeek = today.getDay(); // 0=Sun
+  // This Sunday end-of-day
+  const thisSunday = new Date(today);
+  thisSunday.setDate(today.getDate() + (dayOfWeek === 0 ? 0 : 7 - dayOfWeek));
+  thisSunday.setHours(23,59,59,999);
+  // Next Monday
+  const nextMonday = new Date(thisSunday);
+  nextMonday.setDate(thisSunday.getDate() + 1);
+  nextMonday.setHours(0,0,0,0);
+  // Next Sunday
+  const nextSunday = new Date(nextMonday);
+  nextSunday.setDate(nextMonday.getDate() + 6);
+  nextSunday.setHours(23,59,59,999);
+
+  // Parse event date safely (all-day dates like "2025-03-12" must use local noon to avoid timezone shift)
+  function evLocalDate(ev) {
+    const s = ev.start;
+    if (ev.allDay || s.length === 10) {
+      const parts = s.split('-');
+      return new Date(+parts[0], +parts[1]-1, +parts[2], 0, 0, 0, 0);
+    }
+    const d = new Date(s); d.setHours(0,0,0,0); return d;
+  }
+
+  // Split events into this week and next week
+  const thisWeekEvents = [];
+  const nextWeekEvents = [];
+  gcalEvents.forEach(ev => {
+    const evDate = evLocalDate(ev);
+    if (evDate >= today && evDate <= thisSunday) thisWeekEvents.push(ev);
+    else if (evDate >= nextMonday && evDate <= nextSunday) nextWeekEvents.push(ev);
+  });
+
+  // Group events by day helper
+  function groupByDay(events) {
+    const groups = {};
+    events.forEach(ev => {
+      const d = evLocalDate(ev);
+      const key = dateKey(d);
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(ev);
+    });
+    return groups;
+  }
+
+  // Render event list helper
+  function renderEventList(dayGroups) {
+    let h = '';
+    const sortedDays = Object.keys(dayGroups).sort();
+    sortedDays.forEach(dayKey => {
+      const events = dayGroups[dayKey];
+      const parts = dayKey.split('-');
+      const d = new Date(+parts[0], +parts[1]-1, +parts[2]);
+      const isToday = d.getTime() === today.getTime();
+      const isTomorrow = d.getTime() === tomorrow.getTime();
+      const dayLabel = isToday ? 'Today' : isTomorrow ? 'Tomorrow' : d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
+      events.forEach((ev, i) => {
+        h += `<div class="cal-event">`;
+        h += `<div class="cal-day-label${isToday?' cal-today':''}">${i===0?esc(dayLabel):''}</div>`;
+        h += `<div>`;
+        const multiCal = gcalSelectedIds.length > 1;
+        h += `<div class="cal-event-title">${multiCal ? '<span class="cal-dot" style="background:' + esc(ev.calColor || 'var(--blue)') + ';"></span>' : ''}${esc(ev.title)}</div>`;
+        if (ev.allDay) {
+          h += `<div class="cal-event-time">All day</div>`;
+        } else {
+          const st = new Date(ev.start).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+          const et = new Date(ev.end).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+          h += `<div class="cal-event-time">${st} – ${et}</div>`;
+        }
+        if (ev.location) h += `<div class="cal-event-time">${esc(ev.location)}</div>`;
+        h += `</div></div>`;
+      });
+    });
+    return h;
+  }
+
+  // Generate week summary paragraph
+  function weekSummary(events, isNextWeek) {
+    const count = events.length;
+    const dayCount = new Set(events.map(ev => dateKey(evLocalDate(ev)))).size;
+    const titles = events.slice(0, 4).map(e => e.title);
+    if (count === 0 && !isNextWeek) return `<p style="font-size:13px;color:var(--text-secondary);margin-bottom:10px;line-height:1.5;">Looks like a calm stretch ahead — no events on the calendar. A great chance to slow down, be present with the kids, and enjoy some unstructured family time.</p>`;
+    if (count === 0 && isNextWeek) return `<p style="font-size:13px;color:var(--text-secondary);margin-bottom:10px;line-height:1.5;">Next week is wide open! Use the breathing room to plan something fun together — a family movie night, a new recipe, or just some extra time outdoors.</p>`;
+    let summary = '';
+    if (!isNextWeek) {
+      if (count <= 3) summary = `You've got ${count} event${count>1?'s':''} across ${dayCount} day${dayCount>1?'s':''} this week — a manageable pace. `;
+      else if (count <= 6) summary = `A solid week ahead with ${count} events across ${dayCount} day${dayCount>1?'s':''}. `;
+      else summary = `It's a busy one — ${count} events across ${dayCount} day${dayCount>1?'s':''}. `;
+      summary += `Coming up: ${titles.join(', ')}${count > 4 ? ', and more' : ''}.`;
+    } else {
+      const inspirations = [
+        "Every week is a fresh start — make it count!",
+        "Small moments together add up to big memories.",
+        "You've got this — take it one day at a time.",
+        "New week, new chances to be the family you want to be.",
+        "Remember: progress over perfection, every single week."
+      ];
+      const inspIdx = Math.floor(new Date().getTime() / (1000*60*60*24*7)) % inspirations.length;
+      if (count <= 3) summary = `Looking ahead, next week is lighter with ${count} event${count>1?'s':''} over ${dayCount} day${dayCount>1?'s':''}. `;
+      else if (count <= 6) summary = `Next week has ${count} events across ${dayCount} day${dayCount>1?'s':''} — a good rhythm. `;
+      else summary = `Next week is packed with ${count} events across ${dayCount} day${dayCount>1?'s':''} — plan ahead where you can. `;
+      summary += `On deck: ${titles.join(', ')}${count > 4 ? ', and more' : ''}. ${inspirations[inspIdx]}`;
+    }
+    return `<p style="font-size:13px;color:var(--text-secondary);margin-bottom:10px;line-height:1.5;">${esc(summary)}</p>`;
+  }
+
+  // Parenting tip of the week (rotates weekly)
+  const parentingTips = [
+    "Try a \"10-minute check-in\" this week — sit with each kid one-on-one, no screens, and just ask about their favorite part of the day.",
+    "Model the behavior you want to see. Kids mirror what we do far more than what we say — patience, kindness, and deep breaths go a long way.",
+    "Catch them being good! Specific praise like \"I noticed you shared with your brother\" builds more confidence than a generic \"good job.\"",
+    "Let them struggle a little before jumping in. Working through small frustrations builds resilience and problem-solving skills.",
+    "This week, try saying \"yes\" to one thing you'd normally say no to. A little spontaneity keeps the magic alive.",
+    "Create a family gratitude moment — at dinner, each person shares one thing they're thankful for today.",
+    "Remember: connection before correction. When a kid is upset, a hug often works better than a lecture.",
+    "Give choices instead of commands. \"Do you want to clean up before or after your snack?\" empowers kids and reduces power struggles.",
+    "Put your phone down during transitions — drop-off, pickup, bedtime. Those in-between moments matter more than we think.",
+    "Bored kids are creative kids. Don't rush to fill every quiet moment — let their imaginations take the lead this week."
+  ];
+  const tipIdx = Math.floor(new Date().getTime() / (1000*60*60*24*7)) % parentingTips.length;
+
+  if (!window._calWeekOpen) window._calWeekOpen = {};
+  const twOpen = window._calWeekOpen.thisWeek || false;
+  const nwOpen = window._calWeekOpen.nextWeek || false;
+
+  function toggleCalSection(key) {
+    window._calWeekOpen[key] = !window._calWeekOpen[key];
+    renderCalendarSummary();
+  }
+  window._toggleCalSection = toggleCalSection;
+
+  let html = '';
+
+  // THIS WEEK CARD
+  html += `<div class="card">`;
+  html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">`;
+  html += `<div style="font-size:12px;font-weight:600;color:var(--blue);text-transform:uppercase;">📅 This Week</div>`;
+  html += `<button class="btn btn-sm btn-secondary" onclick="event.stopPropagation();fetchCalendarEvents();" style="font-size:11px;padding:2px 8px;">Refresh</button>`;
+  html += `</div>`;
+  html += weekSummary(thisWeekEvents, false);
+  if (thisWeekEvents.length) {
+    const twChev = twOpen ? '▾' : '▸';
+    html += `<div onclick="window._toggleCalSection('thisWeek')" style="cursor:pointer;display:flex;align-items:center;gap:6px;padding:6px 0 2px;border-top:1px solid var(--border);margin-top:4px;">`;
+    html += `<span style="font-size:12px;color:var(--blue);">${twChev}</span>`;
+    html += `<span style="font-size:12px;font-weight:600;color:var(--blue);">${twOpen ? 'Hide' : 'Show'} ${thisWeekEvents.length} event${thisWeekEvents.length>1?'s':''}</span>`;
+    html += `</div>`;
+    if (twOpen) {
+      html += `<div style="margin-top:8px;">`;
+      html += renderEventList(groupByDay(thisWeekEvents));
+      html += `</div>`;
+    }
+  }
+  html += `</div>`;
+
+  // NEXT WEEK CARD
+  html += `<div class="card" style="margin-top:12px;">`;
+  html += `<div style="font-size:12px;font-weight:600;color:var(--purple);text-transform:uppercase;margin-bottom:8px;">🗓️ Next Week</div>`;
+  html += weekSummary(nextWeekEvents, true);
+  if (nextWeekEvents.length) {
+    const nwChev = nwOpen ? '▾' : '▸';
+    html += `<div onclick="window._toggleCalSection('nextWeek')" style="cursor:pointer;display:flex;align-items:center;gap:6px;padding:6px 0 2px;border-top:1px solid var(--border);margin-top:4px;">`;
+    html += `<span style="font-size:12px;color:var(--purple);">${nwChev}</span>`;
+    html += `<span style="font-size:12px;font-weight:600;color:var(--purple);">${nwOpen ? 'Hide' : 'Show'} ${nextWeekEvents.length} event${nextWeekEvents.length>1?'s':''}</span>`;
+    html += `</div>`;
+    if (nwOpen) {
+      html += `<div style="margin-top:8px;">`;
+      html += renderEventList(groupByDay(nextWeekEvents));
+      html += `</div>`;
+    }
+  }
+  html += `</div>`;
+
+  // PARENTING TIP
+  html += `<div class="card" style="margin-top:12px;">`;
+  html += `<div style="font-size:12px;font-weight:600;color:var(--green);text-transform:uppercase;margin-bottom:8px;">💡 Parenting Tip of the Week</div>`;
+  html += `<p style="font-size:13px;color:var(--text);line-height:1.5;">${esc(parentingTips[tipIdx])}</p>`;
+  html += `</div>`;
+
+  el.innerHTML = html;
+
+  // Enhance summaries with Claude (async, replaces static text when ready)
+  enhanceCalendarWithClaude(thisWeekEvents, nextWeekEvents, today, thisSunday, nextMonday, nextSunday);
+}
+
+let _calClaudeCache = {};
+async function enhanceCalendarWithClaude(twEvents, nwEvents, today, thisSunday, nextMonday, nextSunday) {
+  const proxyUrl = getProxyUrl();
+  if (!proxyUrl) return;
+
+  // Cache key based on date + event content, so edited events (same count) refresh the summary
+  const evSig = events => events.map(ev => ev.start + '|' + ev.title).join(';');
+  let hash = 0;
+  const sigStr = evSig(twEvents) + '#' + evSig(nwEvents);
+  for (let i = 0; i < sigStr.length; i++) { hash = ((hash << 5) - hash + sigStr.charCodeAt(i)) | 0; }
+  const cacheKey = dateKey(today) + '_' + hash;
+  if (_calClaudeCache[cacheKey]) {
+    applyClaudeSummaries(_calClaudeCache[cacheKey]);
+    return;
+  }
+
+  // After a failure, wait 5 minutes before retrying (instead of never retrying)
+  const lastTried = _calClaudeCache[cacheKey + '_tried'];
+  if (lastTried && Date.now() - lastTried < 5 * 60 * 1000) return;
+  _calClaudeCache[cacheKey + '_tried'] = Date.now();
+
+  function formatEvents(events) {
+    return events.map(ev => {
+      const d = ev.allDay || ev.start.length === 10 ? ev.start : new Date(ev.start).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+      const time = ev.allDay ? 'all day' : new Date(ev.start).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      return `${d}: ${ev.title} (${time})${ev.location ? ' at ' + ev.location : ''}`;
+    }).join('\n');
+  }
+
+  const twFormatted = formatEvents(twEvents);
+  const nwFormatted = formatEvents(nwEvents);
+  if (!twFormatted && !nwFormatted) return;
+
+  const kidAges = (data.children || []).map(c => {
+    const age = getChildAge(c.birthday);
+    return c.name + (age !== null ? ' (' + Math.floor(age/12) + 'y' + (age%12) + 'm)' : '');
+  }).join(', ');
+
+  // Build weather context from cached forecast
+  let weatherContext = '';
+  if (weatherCache && weatherCache.daily) {
+    const wd = weatherCache.daily;
+    const forecasts = [];
+    for (let i = 0; i < wd.time.length; i++) {
+      const d = new Date(wd.time[i] + 'T12:00:00');
+      const dayLabel = SHORT_DAYS[d.getDay()];
+      const label = WMO_LABELS[wd.weathercode[i]] || 'Unknown';
+      const hi = Math.round(wd.temperature_2m_max[i]);
+      const lo = Math.round(wd.temperature_2m_min[i]);
+      const rain = wd.precipitation_probability_max ? wd.precipitation_probability_max[i] : 0;
+      forecasts.push(`${dayLabel} ${wd.time[i]}: ${label}, ${hi}°F/${lo}°F${rain > 10 ? ', ' + rain + '% rain' : ''}`);
+    }
+    if (forecasts.length) weatherContext = '\nWeather forecast:\n' + forecasts.join('\n');
+  }
+
+  try {
+    const prompt = `Write two brief family calendar summaries and one parenting tip.
+
+THIS WEEK events (${dateKey(today)} to ${dateKey(thisSunday)}):
+${twFormatted || '(nothing scheduled)'}
+
+NEXT WEEK events (${dateKey(nextMonday)} to ${dateKey(nextSunday)}):
+${nwFormatted || '(nothing scheduled)'}
+${weatherContext}
+
+${kidAges ? 'Kids: ' + kidAges : ''}
+
+Reply as JSON: {"thisWeek":"2-3 sentence summary of this week including relevant weather highlights, warm and practical","nextWeek":"2-3 sentence summary with weather outlook and a touch of inspiration","tip":"one actionable parenting tip related to the week's schedule or weather"}
+Only JSON, no markdown.`;
+
+    const reply = await callClaude(prompt, {
+      feature: 'calendar',
+      system: 'You are a warm, encouraging family assistant. Write like a supportive friend, not a robot. Be specific to their actual events. Keep each field under 50 words.',
+      maxTokens: 400,
+    });
+
+    const cleaned = reply.trim().replace(/```json\n?/g, '').replace(/```/g, '').trim();
+    const summaries = JSON.parse(cleaned);
+    _calClaudeCache[cacheKey] = summaries;
+    applyClaudeSummaries(summaries);
+  } catch(e) {
+    console.log('[Claude] Calendar enhance error:', e.message);
+  }
+}
+
+function applyClaudeSummaries(summaries) {
+  const el = document.getElementById('homeCalendar');
+  if (!el) return;
+  // Find and replace the summary paragraphs
+  const cards = el.querySelectorAll('.card');
+  if (cards[0] && summaries.thisWeek) {
+    const p = cards[0].querySelector('p');
+    if (p) p.textContent = summaries.thisWeek;
+  }
+  if (cards[1] && summaries.nextWeek) {
+    const p = cards[1].querySelector('p');
+    if (p) p.textContent = summaries.nextWeek;
+  }
+  if (cards[2] && summaries.tip) {
+    const p = cards[2].querySelector('p');
+    if (p) p.textContent = summaries.tip;
+  }
+}
+
+// ===========================================================================
+// CONSEQUENCES TRACKER
+// ===========================================================================
+function renderConsequences() {
+  const el = document.getElementById('homeConsequences');
+  if (!el) return;
+  const consequences = data.consequences || [];
+  const today = new Date(); today.setHours(0,0,0,0);
+
+  // Split into active and expired
+  const active = consequences.filter(c => {
+    if (c.resolved) return false;
+    const start = new Date(c.startDate+'T00:00:00');
+    const end = new Date(start); end.setDate(end.getDate() + c.days);
+    return today < end;
+  });
+
+  // Auto-resolve expired ones (and tell the parent, so enforcement actually stops)
+  const autoResolved = [];
+  consequences.forEach(c => {
+    if (c.resolved) return;
+    const start = new Date(c.startDate+'T00:00:00');
+    if (isNaN(start)) return; // corrupted date — leave it for manual resolution
+    const end = new Date(start); end.setDate(end.getDate() + c.days);
+    if (today >= end) { c.resolved = true; autoResolved.push(c); }
+  });
+  if (autoResolved.length) {
+    persist();
+    toast(autoResolved.map(c => c.child + "'s consequence is done: " + c.description).join(' · '));
+  }
+
+  // Get child names for the dropdown
+  const childNames = (data.children||[]).filter(c=>c.name).map(c=>c.name);
+
+  let html = '';
+
+  // Active consequences
+  if (active.length) {
+    html += `<div class="card">`;
+    html += `<div style="font-size:12px;font-weight:600;color:var(--red);text-transform:uppercase;margin-bottom:8px;">Active Consequences</div>`;
+    active.forEach(c => {
+      const start = new Date(c.startDate+'T00:00:00');
+      const end = new Date(start); end.setDate(end.getDate() + c.days);
+      const msLeft = end.getTime() - today.getTime();
+      const daysLeft = Math.ceil(msLeft / (24*60*60*1000));
+      const pct = Math.round(((c.days - daysLeft) / c.days) * 100);
+      const endLabel = end.toLocaleDateString('en-US',{month:'short',day:'numeric'});
+      const bgColor = daysLeft <= 1 ? 'var(--green)' : daysLeft <= 3 ? '#e6a817' : 'var(--red)';
+      html += `<div class="consequence-active">`;
+      html += `<div class="consequence-days" style="background:${bgColor};">${daysLeft}d</div>`;
+      html += `<div class="consequence-info"><div class="cq-child" style="color:${bgColor};">${esc(c.child||'')}</div><div class="cq-desc">${esc(c.description)}</div><div class="cq-dates">Ends ${endLabel}</div>`;
+      // Progress bar
+      html += `<div style="background:var(--border);border-radius:3px;height:4px;margin-top:4px;overflow:hidden;"><div style="width:${pct}%;height:100%;border-radius:3px;background:${bgColor};transition:width 0.3s;"></div></div>`;
+      html += `</div>`;
+      html += `<button class="consequence-done-btn" onclick="resolveConsequence('${c.id}')">End early</button>`;
+      html += `</div>`;
+    });
+    html += `</div>`;
+  }
+
+  // Add new consequence form (collapsible)
+  html += `<div class="card" style="margin-top:${active.length?'8':'0'}px;">`;
+  html += `<div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;" onclick="toggleConsequenceForm()">`;
+  html += `<span style="font-size:13px;font-weight:600;color:var(--text-secondary);">+ Add a consequence</span>`;
+  html += `<span id="cqFormChevron" style="font-size:12px;color:var(--text-secondary);transition:transform 0.2s;">▼</span>`;
+  html += `</div>`;
+  html += `<div id="cqForm" style="display:none;margin-top:10px;">`;
+  html += `<div class="form-group" style="margin-bottom:8px;"><label>Child</label><select id="cqChild" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:var(--radius);">${childNames.length?childNames.map(n=>`<option>${esc(n)}</option>`).join(''):'<option>Child 1</option><option>Child 2</option>'}</select></div>`;
+  html += `<div class="form-group" style="margin-bottom:8px;"><label>Consequence</label><input type="text" id="cqDesc" placeholder="No TV, no iPad, early bedtime..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:var(--radius);"></div>`;
+  html += `<div class="form-group" style="margin-bottom:10px;"><label>Duration (days)</label><div style="display:flex;gap:6px;align-items:center;">`;
+  // Quick day buttons
+  [1,2,3,5,7,14].forEach(d => {
+    html += `<button class="btn btn-sm btn-secondary" onclick="document.getElementById('cqDays').value=${d}" style="padding:4px 10px;font-size:13px;">${d}</button>`;
+  });
+  html += `<input type="number" id="cqDays" value="7" min="1" max="90" style="width:60px;padding:8px;border:1px solid var(--border);border-radius:var(--radius);text-align:center;">`;
+  html += `</div></div>`;
+  html += `<button class="btn btn-primary btn-block" onclick="addConsequence()">Start Consequence</button>`;
+  html += `</div></div>`;
+
+  el.innerHTML = html;
+}
+
+let cqFormOpen = false;
+function toggleConsequenceForm() {
+  cqFormOpen = !cqFormOpen;
+  const form = document.getElementById('cqForm');
+  const chevron = document.getElementById('cqFormChevron');
+  if (form) form.style.display = cqFormOpen ? 'block' : 'none';
+  if (chevron) chevron.style.transform = cqFormOpen ? 'rotate(180deg)' : '';
+}
+
+function addConsequence() {
+  const child = document.getElementById('cqChild').value;
+  const desc = (document.getElementById('cqDesc').value||'').trim();
+  const days = parseInt(document.getElementById('cqDays').value) || 7;
+  if (!desc) { toast('Enter a consequence'); return; }
+  if (!data.consequences) data.consequences = [];
+  data.consequences.push({
+    id: uid(),
+    child: child,
+    description: desc,
+    startDate: dateKey(new Date()),
+    days: days,
+    resolved: false
+  });
+  persist();
+  cqFormOpen = false;
+  renderConsequences();
+  toast(child + ': ' + desc + ' — ' + days + ' days');
+}
+
+function resolveConsequence(id) {
+  if (!confirm('End this consequence early?')) return;
+  const c = (data.consequences||[]).find(x=>x.id===id);
+  if (c) { c.resolved = true; persist(); renderConsequences(); toast('Consequence ended'); }
+}
+
+function renderDoorDashTracker() {
+  const el = document.getElementById('homeDoorDash');
+  const dd = data.doordash || { orders: [], monthlyBudget: 150, monthlyTarget: 4 };
+  const now = new Date();
+  const monthKey = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0');
+  const monthOrders = dd.orders.filter(o => o.date && o.date.startsWith(monthKey) && o.restaurant);
+  const totalSpent = monthOrders.reduce((s,o) => s + (o.cost||0), 0);
+  const orderCount = monthOrders.length;
+  const budget = dd.monthlyBudget || 0;
+  const target = dd.monthlyTarget || 0;
+  const monthName = now.toLocaleDateString('en-US', { month: 'long' });
+
+  // Progress bars
+  const spendPct = budget > 0 ? Math.min(100, (totalSpent/budget)*100) : 0;
+  const countPct = target > 0 ? Math.min(100, (orderCount/target)*100) : 0;
+  const overBudget = budget > 0 && totalSpent > budget;
+  const overCount = target > 0 && orderCount > target;
+
+  let html = `<div class="card">`;
+  html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><div style="font-size:12px;font-weight:600;color:#ff3008;text-transform:uppercase;">🛵 DoorDash — ${esc(monthName)}</div></div>`;
+
+  // Spending bar
+  html += `<div style="margin-bottom:10px;"><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:3px;"><span>Spent</span><span style="font-weight:600;color:${overBudget?'var(--red)':'var(--text)'};">$${totalSpent.toFixed(2)}${budget?' / $'+budget.toFixed(0):''}</span></div>`;
+  if (budget > 0) html += `<div style="background:var(--border);border-radius:4px;height:6px;overflow:hidden;"><div style="width:${spendPct}%;height:100%;border-radius:4px;background:${overBudget?'var(--red)':'#ff3008'};transition:width 0.3s;"></div></div>`;
+  html += `</div>`;
+
+  // Order count bar
+  html += `<div><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:3px;"><span>Orders</span><span style="font-weight:600;color:${overCount?'var(--red)':'var(--text)'};">${orderCount}${target?' / '+target:''}</span></div>`;
+  if (target > 0) html += `<div style="background:var(--border);border-radius:4px;height:6px;overflow:hidden;"><div style="width:${countPct}%;height:100%;border-radius:4px;background:${overCount?'var(--red)':'#ff3008'};transition:width 0.3s;"></div></div>`;
+  html += `</div>`;
+
+  // Recent orders (last 3)
+  if (monthOrders.length) {
+    const recent = [...monthOrders].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,3);
+    html += `<div style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px;font-size:12px;color:var(--text-secondary);">`;
+    recent.forEach(o => {
+      const d = new Date(o.date+'T12:00:00');
+      const label = d.toLocaleDateString('en-US',{month:'short',day:'numeric'});
+      html += `<div style="display:flex;justify-content:space-between;padding:2px 0;"><span>${esc(o.restaurant)}</span><span>${o.cost?'$'+Number(o.cost).toFixed(2):''} · ${label}</span></div>`;
+    });
+    html += `</div>`;
+  }
+
+  html += `</div>`;
+  el.innerHTML = html;
+}
+
+// ===========================================================================
+// WEATHER FORECAST (Open-Meteo, free, no API key)
+// ===========================================================================
+// Last forecast survives reloads so screens paint instantly, then revalidate
+let weatherCache = (function() { try { return JSON.parse(localStorage.getItem('weather_cache') || 'null'); } catch (e) { return null; } })();
+
+const WMO_ICONS = {
+  0:'☀️', 1:'🌤️', 2:'⛅', 3:'☁️',
+  45:'🌫️', 48:'🌫️',
+  51:'🌦️', 53:'🌦️', 55:'🌧️',
+  56:'🌧️', 57:'🌧️',
+  61:'🌧️', 63:'🌧️', 65:'🌧️',
+  66:'🌧️', 67:'🌧️',
+  71:'🌨️', 73:'🌨️', 75:'🌨️', 77:'🌨️',
+  80:'🌦️', 81:'🌧️', 82:'🌧️',
+  85:'🌨️', 86:'🌨️',
+  95:'⛈️', 96:'⛈️', 99:'⛈️',
+};
+const WMO_LABELS = {
+  0:'Clear', 1:'Mostly clear', 2:'Partly cloudy', 3:'Overcast',
+  45:'Foggy', 48:'Fog', 51:'Light drizzle', 53:'Drizzle', 55:'Heavy drizzle',
+  61:'Light rain', 63:'Rain', 65:'Heavy rain', 71:'Light snow', 73:'Snow', 75:'Heavy snow',
+  80:'Light showers', 81:'Showers', 82:'Heavy showers', 95:'Thunderstorm', 96:'Thunderstorm', 99:'Severe storm',
+};
+const SHORT_DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+function getWeatherLoc() { try { return JSON.parse(localStorage.getItem('weather_loc') || 'null'); } catch (e) { return null; } }
+const US_STATES = { al:'alabama',ak:'alaska',az:'arizona',ar:'arkansas',ca:'california',co:'colorado',ct:'connecticut',de:'delaware',fl:'florida',ga:'georgia',hi:'hawaii',id:'idaho',il:'illinois',in:'indiana',ia:'iowa',ks:'kansas',ky:'kentucky',la:'louisiana',me:'maine',md:'maryland',ma:'massachusetts',mi:'michigan',mn:'minnesota',ms:'mississippi',mo:'missouri',mt:'montana',ne:'nebraska',nv:'nevada',nh:'new hampshire',nj:'new jersey',nm:'new mexico',ny:'new york',nc:'north carolina',nd:'north dakota',oh:'ohio',ok:'oklahoma',or:'oregon',pa:'pennsylvania',ri:'rhode island',sc:'south carolina',sd:'south dakota',tn:'tennessee',tx:'texas',ut:'utah',vt:'vermont',va:'virginia',wa:'washington',wv:'west virginia',wi:'wisconsin',wy:'wyoming' };
+// Geocode a typed location (Open-Meteo geocoding, free, no key) and save it.
+// The geocoder matches a bare city or ZIP, so we split "City, State" and filter by state.
+async function setWeatherLocation() {
+  const q = document.getElementById('weatherLoc').value.trim();
+  const status = document.getElementById('weatherLocStatus');
+  if (!q) { localStorage.removeItem('weather_loc'); weatherCache = null; if (status) status.textContent = 'Using current location (GPS).'; fetchWeather(); return; }
+  if (status) status.textContent = 'Looking up…';
+  try {
+    const parts = q.split(',').map(s => s.trim()).filter(Boolean);
+    const city = parts[0];
+    let region = (parts[1] || '').toLowerCase();
+    if (US_STATES[region]) region = US_STATES[region];
+    const r = await fetch('https://geocoding-api.open-meteo.com/v1/search?count=10&language=en&name=' + encodeURIComponent(city));
+    const j = await r.json();
+    const results = j.results || [];
+    let m = null;
+    if (region) m = results.find(x => (x.admin1 || '').toLowerCase() === region) || results.find(x => (x.admin1 || '').toLowerCase().includes(region));
+    m = m || results[0];
+    if (!m) { if (status) status.textContent = 'Not found — try just the city name or a ZIP code.'; return; }
+    const label = [m.name, m.admin1, m.country_code].filter(Boolean).join(', ');
+    localStorage.setItem('weather_loc', JSON.stringify({ lat: m.latitude.toFixed(4), lon: m.longitude.toFixed(4), label }));
+    weatherCache = null;
+    if (status) status.textContent = '✓ Set to ' + label;
+    fetchWeather();
+  } catch (e) { if (status) status.textContent = 'Lookup failed — check your connection.'; }
+}
+function loadWeatherSettings() {
+  const el = document.getElementById('weatherLoc'); const saved = getWeatherLoc();
+  if (el) el.value = saved && saved.label ? saved.label : '';
+  const status = document.getElementById('weatherLocStatus');
+  if (status) status.textContent = saved && saved.label ? ('Weather for ' + saved.label) : 'Using current location (GPS).';
+}
+
+async function fetchWeather() {
+  // Use cached data if less than 30 minutes old
+  if (weatherCache && (Date.now() - weatherCache.fetchedAt < 30*60*1000)) {
+    renderWeather(weatherCache); return;
+  }
+  const el = document.getElementById('homeWeather');
+  if (weatherCache) renderWeather(weatherCache); // stale but useful while we refetch
+  else if (el) el.innerHTML = '<div class="card"><p style="font-size:13px;color:var(--text-secondary);">Loading weather...</p></div>';
+
+  try {
+    let lat, lon, label = '';
+    const saved = getWeatherLoc();
+    if (saved && saved.lat) {
+      lat = saved.lat; lon = saved.lon; label = saved.label || '';
+    } else {
+      const pos = await new Promise((resolve, reject) => {
+        if (!navigator.geolocation) { reject(new Error('No geolocation')); return; }
+        navigator.geolocation.getCurrentPosition(resolve, reject, {timeout:10000, maximumAge:600000});
+      });
+      lat = pos.coords.latitude.toFixed(4);
+      lon = pos.coords.longitude.toFixed(4);
+    }
+    // US National Weather Service first (matches phone weather closely); fall back to Open-Meteo (global)
+    let result = null;
+    try { result = await fetchNWS(lat, lon, label); } catch (e) { result = null; }
+    if (!result) result = await fetchOpenMeteo(lat, lon, label);
+    weatherCache = result;
+    try { localStorage.setItem('weather_cache', JSON.stringify(result)); } catch (e) {}
+    renderWeather(weatherCache);
+    if (fridgeOpen()) renderFridgeMode();
+  } catch(e) {
+    const el2 = document.getElementById('homeWeather');
+    if (el2 && !weatherCache) el2.innerHTML = '<div class="card"><p style="font-size:13px;color:var(--text-secondary);">Weather unavailable — enable location access to see your forecast.</p></div>';
+  }
+}
+
+// Open-Meteo (global fallback) — returns the normalized weatherCache shape
+async function fetchOpenMeteo(lat, lon, label) {
+  const resp = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code,apparent_temperature&daily=weathercode,temperature_2m_max,temperature_2m_min,precipitation_probability_max&temperature_unit=fahrenheit&timezone=auto&forecast_days=7`, {signal: AbortSignal.timeout(8000)});
+  if (!resp.ok) throw new Error('Weather API error');
+  const result = await resp.json();
+  return { ...result, fetchedAt: Date.now(), locLabel: label, source: 'open-meteo' };
+}
+
+// Map an NWS text forecast to our WMO code so existing icons/labels work
+function nwsCode(s) {
+  s = (s || '').toLowerCase();
+  if (/thunder/.test(s)) return 95;
+  if (/snow|flurr|sleet|wintry|ice/.test(s)) return 71;
+  if (/rain|shower|drizzle/.test(s)) return /heavy/.test(s) ? 65 : 61;
+  if (/fog|haze/.test(s)) return 45;
+  if (/partly sunny|partly cloudy/.test(s)) return 2;
+  if (/mostly cloudy|cloudy|overcast/.test(s)) return 3;
+  if (/mostly sunny|mostly clear/.test(s)) return 1;
+  if (/sunny|clear/.test(s)) return 0;
+  return 2;
+}
+
+// US National Weather Service — normalized into the weatherCache shape
+async function fetchNWS(lat, lon, label) {
+  const headers = { 'Accept': 'application/geo+json' };
+  const p = await fetch(`https://api.weather.gov/points/${lat},${lon}`, { headers, signal: AbortSignal.timeout(8000) });
+  if (!p.ok) throw new Error('nws points ' + p.status);
+  const props = (await p.json()).properties;
+  if (!props || !props.forecast) throw new Error('nws no forecast');
+  if (!label) { const rl = props.relativeLocation && props.relativeLocation.properties; if (rl) label = [rl.city, rl.state].filter(Boolean).join(', '); }
+  const f = await fetch(props.forecast, { headers, signal: AbortSignal.timeout(8000) });
+  if (!f.ok) throw new Error('nws forecast ' + f.status);
+  const periods = (await f.json()).properties.periods || [];
+  if (!periods.length) throw new Error('nws empty');
+  const byDate = {}, order = [];
+  for (const per of periods) {
+    const dk = (per.startTime || '').slice(0, 10); if (!dk) continue;
+    if (!byDate[dk]) { byDate[dk] = {}; order.push(dk); }
+    const e = byDate[dk];
+    if (per.isDaytime) { e.max = per.temperature; e.code = nwsCode(per.shortForecast); e.pop = (per.probabilityOfPrecipitation && per.probabilityOfPrecipitation.value) || 0; }
+    else { e.min = per.temperature; if (e.code == null) e.code = nwsCode(per.shortForecast); }
+  }
+  const time = [], tmax = [], tmin = [], code = [], pop = [];
+  for (const dk of order.slice(0, 7)) {
+    const e = byDate[dk]; time.push(dk);
+    tmax.push(e.max != null ? e.max : e.min); tmin.push(e.min != null ? e.min : e.max);
+    code.push(e.code != null ? e.code : 2); pop.push(e.pop || 0);
+  }
+  let current;
+  try {
+    const h = await fetch(props.forecastHourly, { headers, signal: AbortSignal.timeout(8000) });
+    if (h.ok) { const hp = (await h.json()).properties.periods || []; if (hp[0]) current = { temperature_2m: hp[0].temperature, weather_code: nwsCode(hp[0].shortForecast) }; }
+  } catch (e) {}
+  return { daily: { time, temperature_2m_max: tmax, temperature_2m_min: tmin, weathercode: code, precipitation_probability_max: pop }, current, locLabel: label || '', fetchedAt: Date.now(), source: 'nws' };
+}
+
+function renderWeather(w) {
+  const el = document.getElementById('homeWeather');
+  if (!el || !w || !w.daily) return;
+  const d = w.daily;
+  const today = new Date();
+  let html = '<div class="card">';
+  html += `<h3 style="margin-bottom:10px;">🌤️ This Week's Weather${w.locLabel ? ' <span style="text-transform:none;font-weight:400;color:var(--text-secondary);">· ' + esc(w.locLabel) + '</span>' : ''}</h3>`;
+  if (w.current && typeof w.current.temperature_2m === 'number') {
+    html += `<div style="font-size:15px;margin-bottom:8px;"><strong>Now ${Math.round(w.current.temperature_2m)}°</strong> <span style="color:var(--text-secondary);">${esc(WMO_LABELS[w.current.weather_code] || '')}${typeof w.current.apparent_temperature === 'number' ? ' · feels ' + Math.round(w.current.apparent_temperature) + '°' : ''}</span></div>`;
+  }
+  html += '<div style="display:flex;gap:4px;overflow-x:auto;padding-bottom:4px;">';
+  for (let i = 0; i < d.time.length && i < 7; i++) {
+    const dt = new Date(d.time[i] + 'T12:00:00');
+    const dayName = i === 0 ? 'Today' : SHORT_DAYS[dt.getDay()];
+    const code = d.weathercode[i];
+    const icon = WMO_ICONS[code] || '🌡️';
+    const hi = Math.round(d.temperature_2m_max[i]);
+    const lo = Math.round(d.temperature_2m_min[i]);
+    const rain = d.precipitation_probability_max ? d.precipitation_probability_max[i] : null;
+    html += `<div style="flex:1;min-width:64px;text-align:center;padding:6px 2px;background:var(--bg);border-radius:8px;">`;
+    html += `<div style="font-size:11px;font-weight:600;color:var(--text-secondary);">${dayName}</div>`;
+    html += `<div style="font-size:22px;margin:4px 0;">${icon}</div>`;
+    html += `<div style="font-size:13px;font-weight:600;">${hi}°</div>`;
+    html += `<div style="font-size:11px;color:var(--text-secondary);">${lo}°</div>`;
+    if (rain !== null && rain > 10) html += `<div style="font-size:10px;color:#4a90d9;margin-top:2px;">💧${rain}%</div>`;
+    html += '</div>';
+  }
+  html += '</div></div>';
+  el.innerHTML = html;
+}
+
+// One-line weather note for today (used in the Tonight card)
+function todayWeatherNote() {
+  if (!weatherCache || !weatherCache.daily || !weatherCache.daily.time) return '';
+  const i = weatherCache.daily.time.indexOf(dateKey(new Date()));
+  if (i === -1) return '';
+  const wd = weatherCache.daily;
+  const cur = weatherCache.current;
+  const hi = Math.round(wd.temperature_2m_max[i]);
+  const lo = Math.round(wd.temperature_2m_min[i]);
+  const rain = wd.precipitation_probability_max ? wd.precipitation_probability_max[i] : 0;
+  const code = (cur && typeof cur.weather_code === 'number') ? cur.weather_code : wd.weathercode[i];
+  const label = WMO_LABELS[code] || '';
+  const nowPart = (cur && typeof cur.temperature_2m === 'number') ? Math.round(cur.temperature_2m) + '°F now · ' : '';
+  return `${label} · ${nowPart}H ${hi}° L ${lo}°${rain > 40 ? ' · ' + rain + '% rain' : ''}`.trim();
+}
+
+// Instant smart pick for tonight: skips recently-made recipes and this week's
+// plan, favors higher-rated ones. No network call — feels instant.
+function pickTonight() {
+  if (!data.recipes.length) { toast('Add some recipes first!'); showView('recipes'); return; }
+  const todayKey = dateKey(new Date());
+  const { lastUsed } = getRecipeStats();
+  const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 10);
+  const cutoffKey = dateKey(cutoff);
+  const weekIds = new Set();
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(currentWeekStart); d.setDate(d.getDate() + i);
+    (data.mealPlan[dateKey(d)] || []).forEach(m => { if (dateKey(d) !== todayKey) weekIds.add(m.recipeId); });
+  }
+  const currentId = (data.mealPlan[todayKey] || [])[0] && (data.mealPlan[todayKey] || [])[0].recipeId;
+  let pool = data.recipes.filter(r => r.id !== currentId && !weekIds.has(r.id) && (!lastUsed[r.id] || lastUsed[r.id] < cutoffKey));
+  if (!pool.length) pool = data.recipes.filter(r => r.id !== currentId);
+  if (!pool.length) pool = data.recipes;
+  // Weight by rating: each star above 2 adds an extra ticket
+  const tickets = [];
+  pool.forEach(r => {
+    const w = Math.max(1, Math.round(getAverageRating(r.id) - 1));
+    for (let t = 0; t < w; t++) tickets.push(r);
+  });
+  const pick = tickets[Math.floor(Math.random() * tickets.length)];
+  data.mealPlan[todayKey] = [{ recipeId: pick.id }];
+  persist();
+  renderHome();
+  toast('Tonight: ' + pick.name);
+}
+
+function renderHome() {
+  const h = new Date().getHours();
+  document.querySelector('#view-home h1').textContent = h < 12 ? 'Good morning!' : h < 17 ? 'Good afternoon!' : 'Good evening!';
+
+  // Weather forecast
+  fetchWeather();
+  // Calendar summary
+  renderCalendarSummary();
+  // Consequences tracker
+  renderConsequences();
+  // DoorDash tracker
+  renderDoorDashTracker();
+
+  const today = dateKey(new Date());
+  const todayDD = (data.doordash||{orders:[]}).orders.find(o=>o.date===today);
+  const todayMeals = data.mealPlan[today] || [];
+  const tonight = todayMeals.length ? data.recipes.find(r => r.id === todayMeals[0].recipeId) : null;
+  const card = document.getElementById('homeTonightCard');
+  const todayIsEO = todayDD && todayDD.mode === 'eatingout';
+  if (todayIsEO && todayDD.restaurant) {
+    card.innerHTML = `<div class="card" onclick="showView('plan')"><div style="font-size:12px;font-weight:600;color:var(--purple);text-transform:uppercase;margin-bottom:4px;">Tonight's Dinner — Eating Out</div><div class="card-title">🍽️ ${esc(todayDD.restaurant)}</div><div class="card-sub">${todayDD.items?esc(todayDD.items):''}</div></div>`;
+  } else if (todayIsEO) {
+    card.innerHTML = `<div class="card" onclick="showView('plan')"><div style="font-size:12px;font-weight:600;color:var(--purple);text-transform:uppercase;margin-bottom:4px;">Tonight's Dinner — Eating Out</div><div class="card-title">🍽️ Eating out tonight</div><div class="card-sub">Tap to add details</div></div>`;
+  } else if (todayDD && todayDD.restaurant) {
+    card.innerHTML = `<div class="card"><div onclick="showView('plan')"><div style="font-size:12px;font-weight:600;color:#ff3008;text-transform:uppercase;margin-bottom:4px;">Tonight's Dinner — DoorDash</div><div class="card-title">🛵 ${esc(todayDD.restaurant)}</div><div class="card-sub">${todayDD.items?esc(todayDD.items):''}${todayDD.cost?' · $'+Number(todayDD.cost).toFixed(2):''}</div></div><button class="btn btn-primary btn-sm" style="margin-top:10px;background:#ff3008;" onclick="event.stopPropagation();openDoorDash('${esc(todayDD.restaurant).replace(/'/g,"\\'")}')">🛵 Open DoorDash</button></div>`;
+  } else if (todayDD) {
+    card.innerHTML = `<div class="card"><div onclick="showView('plan')"><div style="font-size:12px;font-weight:600;color:#ff3008;text-transform:uppercase;margin-bottom:4px;">Tonight's Dinner — DoorDash</div><div class="card-title">🛵 DoorDash night</div><div class="card-sub">Tap to log your order</div></div><button class="btn btn-primary btn-sm" style="margin-top:10px;background:#ff3008;" onclick="event.stopPropagation();openDoorDash('')">🛵 Open DoorDash</button></div>`;
+  } else {
+    const wNote = todayWeatherNote();
+    card.innerHTML = tonight
+      ? `<div class="hero-card">
+          <div onclick="showRecipeDetail('${tonight.id}')">
+            <div class="hero-label">Tonight's Dinner</div>
+            <div class="hero-title">${esc(tonight.name)}</div>
+            <div class="hero-sub">${tonight.ingredients.length} ingredients${wNote ? ' · ' + wNote : ''}</div>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:14px;">
+            <button class="btn btn-primary" style="flex:1;" onclick="event.stopPropagation();openCookMode('${tonight.id}')">👨‍🍳 Start cooking</button>
+            <button class="btn btn-secondary btn-sm" style="border:1px solid rgba(255,255,255,0.35);" onclick="event.stopPropagation();pickTonight()" title="Swap for something else">🎲</button>
+          </div>
+        </div>`
+      : `<div class="hero-card" style="background:linear-gradient(135deg,#857463 0%,#6d5d4c 100%);box-shadow:0 8px 28px rgba(109,93,76,0.25);">
+          <div onclick="showView('plan')">
+            <div class="hero-label" style="color:#e3d7c8;">Tonight's Dinner</div>
+            <div class="hero-title">Nothing planned yet</div>
+            <div class="hero-sub" style="color:#d5c8b8;">${wNote ? wNote : 'Let’s fix that'}</div>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:14px;">
+            <button class="btn btn-primary" style="flex:1;color:#6d5d4c;" onclick="event.stopPropagation();pickTonight()">✨ Pick for me</button>
+            <button class="btn btn-secondary btn-sm" style="border:1px solid rgba(255,255,255,0.35);" onclick="event.stopPropagation();showView('plan')">Plan week</button>
+          </div>
+        </div>`;
+  }
+
+  let planned = 0, ddThisWeek = 0, eoThisWeek = 0;
+  const ddOrders = (data.doordash||{orders:[]}).orders;
+  for (let i = 0; i < 7; i++) { const d = new Date(currentWeekStart); d.setDate(d.getDate()+i); const dk=dateKey(d); if ((data.mealPlan[dk]||[]).length) planned++; const wo=ddOrders.find(o=>o.date===dk); if(wo&&wo.mode==='eatingout') eoThisWeek++; else if(wo) ddThisWeek++; }
+  const totalPlanned = planned + ddThisWeek + eoThisWeek;
+  let subParts = [planned+' cooking'];
+  if (ddThisWeek) subParts.push(ddThisWeek+' DoorDash');
+  if (eoThisWeek) subParts.push(eoThisWeek+' eating out');
+  subParts.push(data.recipes.length+' recipes in your book');
+  document.getElementById('homeWeekSummary').innerHTML = `<div class="card" onclick="showView('plan')"><div class="card-title">${totalPlanned}/7 dinners planned</div><div class="card-sub">${subParts.join(' · ')}</div></div>`;
+
+  renderTip();
+}
+
+// ===========================================================================
+// PARENTING TIPS (same tip database as before)
+// ===========================================================================
+function getChildAge(bdayStr) {
+  if (!bdayStr) return null;
+  const bday = new Date(bdayStr), now = new Date();
+  let months = (now.getFullYear()-bday.getFullYear())*12 + (now.getMonth()-bday.getMonth());
+  if (now.getDate() < bday.getDate()) months--;
+  return { months, years: Math.floor(months/12), remainingMonths: months%12 };
+}
+function ageLabel(age) { if (!age) return ''; return age.months < 24 ? `${age.months} months` : `${age.years} yr${age.remainingMonths ? ' '+age.remainingMonths+' mo':''}`;  }
+function hashStr(s) { let h=0; for(let i=0;i<s.length;i++){h=((h<<5)-h)+s.charCodeAt(i);h|=0;} return Math.abs(h); }
+
+// Cached Claude-generated tips — persisted to localStorage
+let _claudeTips = JSON.parse(localStorage.getItem('claude_tips') || '[]');
+let _claudeTipsLoading = false;
+
+function renderTip() {
+  const el = document.getElementById('homeTip');
+  const children = data.children || [];
+  const hasKids = children.some(c => c.birthday);
+
+  if (!hasKids) {
+    el.innerHTML = `<div class="tip-card" onclick="showView('sync')"><div class="tip-header"><div class="tip-icon">&#x1F476;</div><div><div class="tip-label">Parenting Tips</div><div class="tip-age">Set up birthdays in Settings to see tips!</div></div></div></div>`;
+    return;
+  }
+
+  const proxyUrl = getProxyUrl();
+  const hasClaude = !!proxyUrl;
+
+  // If we have cached Claude tips, show them
+  if (_claudeTips.length) {
+    if (tipIndex >= _claudeTips.length) tipIndex = 0;
+    if (tipIndex < 0) tipIndex = _claudeTips.length - 1;
+    const tip = _claudeTips[tipIndex];
+    el.innerHTML = `<div class="tip-card">
+      <div class="tip-header"><div class="tip-icon">🤖</div><div>
+        <div class="tip-label">${esc(tip.category||'')} · for ${esc(tip.childName||'Family')}</div>
+        <div class="tip-age">AI-personalized</div>
+      </div></div>
+      <div class="tip-title">${esc(tip.title||'')}</div>
+      <div class="tip-body">${esc(tip.body||'')}</div>
+      <div class="tip-nav">
+        <button onclick="tipIndex--;renderTip();">&larr; Prev</button>
+        <button onclick="tipIndex++;renderTip();">Next &rarr;</button>
+        <span style="flex:1;"></span>
+        <button onclick="refreshClaudeTips()" style="border-color:var(--purple);color:var(--purple);" title="Get new tips">&#x1F504; Refresh</button>
+        <span style="font-size:12px;color:var(--text-secondary);align-self:center;margin-left:4px;">${tipIndex+1}/${_claudeTips.length}</span>
+      </div>
+      <div style="margin-top:8px;"><button class="btn btn-sm btn-secondary" onclick="openParentChatModal()" style="font-size:12px;">💬 Ask for more advice</button></div>
+    </div>`;
+    return;
+  }
+
+  // Loading state
+  if (_claudeTipsLoading) {
+    el.innerHTML = `<div class="tip-card" style="padding:18px;">
+      <div style="font-size:13px;font-weight:600;color:var(--purple);margin-bottom:8px;">🤖 Writing tips for your family...</div>
+      <div class="skel" style="width:90%;"></div>
+      <div class="skel" style="width:75%;"></div>
+      <div class="skel" style="width:60%;"></div>
+    </div>`;
+    return;
+  }
+
+  // No Claude configured — show a prompt to set it up, or a generate button
+  if (hasClaude) {
+    el.innerHTML = `<div class="tip-card" style="text-align:center;padding:20px;">
+      <div style="font-size:24px;margin-bottom:8px;">✨</div>
+      <div style="font-weight:600;margin-bottom:8px;">Parenting Tips</div>
+      <div style="font-size:13px;color:var(--text-secondary);margin-bottom:12px;">Get AI-personalized tips based on your children's ages and your parenting philosophy.</div>
+      <button class="btn btn-primary" onclick="refreshClaudeTips()" style="font-size:14px;">🤖 Generate Tips</button>
+    </div>`;
+  } else {
+    el.innerHTML = `<div class="tip-card" onclick="showView('sync')" style="cursor:pointer;">
+      <div class="tip-header"><div class="tip-icon">✨</div><div>
+        <div class="tip-label">Parenting Tips</div>
+        <div class="tip-age">Set up Claude AI in Settings to get personalized tips!</div>
+      </div></div>
+    </div>`;
+  }
+}
+
+async function refreshClaudeTips() {
+  const proxyUrl = getProxyUrl();
+  if (!proxyUrl) { toast('Set up Claude AI in Settings first'); showView('sync'); return; }
+
+  const children = data.children || [];
+  const kidInfo = children.filter(c => c.name && c.birthday).map(c => {
+    const age = getChildAge(c.birthday);
+    return age ? `${c.name} (${ageLabel(age)})` : c.name;
+  });
+  if (!kidInfo.length) { toast('Add children in Settings first'); return; }
+
+  _claudeTipsLoading = true;
+  tipIndex = 0;
+  renderTip();
+
+  try {
+    const philosophy = getPhilosophy();
+    const consequences = (data.consequences || []).filter(c => !c.resolved).map(c => `${c.child}: ${c.description} (${c.days} days)`);
+    const recentResolved = (data.consequences || []).filter(c => c.resolved).slice(-5).map(c => `${c.child}: ${c.description}`);
+    const dayName = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+
+    const prompt = `Generate 6 personalized parenting tips for the Gould family today (${dayName}).
+
+Children: ${kidInfo.join(', ')}
+${philosophy ? 'Parenting philosophy: ' + philosophy : ''}
+${consequences.length ? 'Active consequences/challenges: ' + consequences.join('; ') : ''}
+${recentResolved.length ? 'Recently resolved: ' + recentResolved.join('; ') : ''}
+
+Requirements:
+- Tips should be age-appropriate for the specific children listed
+- Mix categories: emotional, language, motor skills, independence, social, cognitive, routine, sibling dynamics
+- If there are active consequences, include 1-2 tips that address those situations
+- Align with the parenting philosophy if provided
+- Each tip should be specific and actionable — include a phrase they can say or activity to try
+- Make them relevant to today (${dayName}) — weekend tips differ from weekday tips
+- Vary the children each tip targets
+
+Reply as a JSON array: [{"category":"short category","title":"short title","body":"2-3 sentence tip","childName":"which child or Family"}]
+Only valid JSON, no markdown fences.`;
+
+    const reply = await callClaude(prompt, {
+      feature: 'tips',
+      system: 'You are a warm, evidence-based child development advisor. Give practical, specific advice — not generic platitudes. Match the family\'s stated parenting philosophy. Always return valid JSON.',
+      maxTokens: 1200,
+    });
+
+    const cleaned = reply.trim().replace(/```json\n?/g, '').replace(/```/g, '').trim();
+    const tips = JSON.parse(cleaned);
+    if (Array.isArray(tips) && tips.length) {
+      _claudeTips = tips;
+      localStorage.setItem('claude_tips', JSON.stringify(tips));
+    } else {
+      throw new Error('Invalid response format');
+    }
+  } catch(e) {
+    console.log('[Claude] Tips error:', e.message);
+    toast('Could not generate tips: ' + e.message);
+    // Keep existing cached tips on error — don't wipe them
+  }
+  _claudeTipsLoading = false;
+  renderTip();
+}
+
+// ===========================================================================
+// PARENTING PHILOSOPHY
+// ===========================================================================
+function saveParentingPhilosophy() {
+  const val = document.getElementById('parentPhilosophy').value.trim();
+  if (val) localStorage.setItem('parenting_philosophy', val);
+  else localStorage.removeItem('parenting_philosophy');
+  toast('Philosophy saved');
+}
+function loadParentingPhilosophy() {
+  const el = document.getElementById('parentPhilosophy');
+  if (el) el.value = getPhilosophy();
+}
+
+// (Claude-powered tips are now generated on-demand via refreshClaudeTips() above)
+
+// ===========================================================================
+// PARENTING ADVICE CHAT
+// ===========================================================================
+let parentChatHistory = loadChatHistory('mp_parent_chat');
+function clearParentChat() { parentChatHistory = []; saveChatHistory('mp_parent_chat', []); renderParentChatMessages(); }
+
+function openParentChatModal() {
+  const proxyUrl = getProxyUrl();
+  if (!proxyUrl) { toast('Set up Claude AI in Settings first'); showView('sync'); return; }
+  document.getElementById('parentChatModal').classList.add('open');
+  if (!parentChatHistory.length) {
+    const consequences = (data.consequences || []).filter(c => !c.resolved);
+    let intro = '<div style="text-align:center;color:var(--text-secondary);font-size:13px;padding:20px;">Ask me anything about parenting! I know your family and your philosophy. Try:<br><br>';
+    if (consequences.length) {
+      intro += `"How should I handle the situation with ${consequences[0].child}?"<br>`;
+      intro += '"Is this consequence effective?"<br>';
+    }
+    intro += '"My toddler won\'t stop hitting"<br>"Tips for bedtime struggles"<br>"How do I handle tantrums in public?"</div>';
+    document.getElementById('parentChatMessages').innerHTML = intro;
+  }
+  document.getElementById('parentChatInput').focus();
+}
+function closeParentChatModal() { document.getElementById('parentChatModal').classList.remove('open'); }
+
+function renderParentChatMessages() {
+  const el = document.getElementById('parentChatMessages');
+  el.innerHTML = parentChatHistory.map(m => {
+    const isUser = m.role === 'user';
+    return `<div style="margin-bottom:12px;display:flex;${isUser ? 'justify-content:flex-end' : 'justify-content:flex-start'};">
+      <div style="max-width:85%;padding:10px 14px;border-radius:${isUser ? '16px 16px 4px 16px' : '16px 16px 16px 4px'};background:${isUser ? 'var(--accent)' : 'var(--surface)'};color:${isUser ? 'white' : 'var(--text)'};font-size:14px;line-height:1.5;white-space:pre-wrap;">${esc(m.content)}</div>
+    </div>`;
+  }).join('');
+  el.scrollTop = el.scrollHeight;
+}
+
+async function sendParentChatMessage() {
+  const input = document.getElementById('parentChatInput');
+  const msg = input.value.trim();
+  if (!msg) return;
+  input.value = '';
+
+  parentChatHistory.push({ role: 'user', content: msg });
+  renderParentChatMessages();
+
+  const el = document.getElementById('parentChatMessages');
+  el.innerHTML += '<div id="parentChatThinking" style="margin-bottom:12px;"><div style="display:inline-block;padding:12px 16px;border-radius:16px 16px 16px 4px;background:var(--surface);"><span class="typing-dots"><span></span><span></span><span></span></span></div></div>';
+  el.scrollTop = el.scrollHeight;
+  document.getElementById('parentChatSendBtn').disabled = true;
+
+  try {
+    const children = data.children || [];
+    const kidInfo = children.filter(c => c.name && c.birthday).map(c => {
+      const age = getChildAge(c.birthday);
+      return age ? `${c.name} (${ageLabel(age)})` : c.name;
+    });
+    const philosophy = getPhilosophy();
+    const activeConsequences = (data.consequences || []).filter(c => !c.resolved).map(c => `${c.child}: "${c.description}" — ${c.days} day duration, started ${c.startDate}`);
+    const pastConsequences = (data.consequences || []).filter(c => c.resolved).slice(-10).map(c => `${c.child}: "${c.description}" (resolved)`);
+
+    const system = `You are a warm, evidence-based parenting advisor for the Gould family. Be like a trusted friend who happens to know a lot about child development.
+
+Family:
+${kidInfo.length ? 'Children: ' + kidInfo.join(', ') : 'No children info provided'}
+
+${philosophy ? 'Their parenting philosophy: ' + philosophy + '\n\nIMPORTANT: Always align your advice with this philosophy. Reference it when relevant.' : ''}
+
+${activeConsequences.length ? 'Active consequences:\n' + activeConsequences.join('\n') : ''}
+${pastConsequences.length ? '\nRecent past consequences:\n' + pastConsequences.join('\n') : ''}
+
+Guidelines:
+- Give specific, actionable advice (not generic platitudes)
+- Suggest exact phrases they can say to their child
+- Acknowledge how hard parenting is without being condescending
+- If consequences are active, weave in guidance about whether they're effective
+- Keep responses to 2-3 paragraphs max
+- If they describe a challenging behavior, give both an immediate response strategy AND a longer-term approach`;
+
+    const reply = await callClaude('', {
+      feature: 'parentchat',
+      system,
+      messages: parentChatHistory.slice(-10),
+      maxTokens: 800,
+    });
+    parentChatHistory.push({ role: 'assistant', content: reply });
+  } catch(e) {
+    parentChatHistory.push({ role: 'assistant', content: 'Sorry, I hit an error: ' + e.message });
+  }
+  saveChatHistory('mp_parent_chat', parentChatHistory);
+  document.getElementById('parentChatSendBtn').disabled = false;
+  renderParentChatMessages();
+}
+
+// ===========================================================================
+// CHILDREN
+// ===========================================================================
+function saveKids() {
+  data.children = [
+    { name: document.getElementById('child1Name').value.trim(), birthday: document.getElementById('child1Bday').value },
+    { name: document.getElementById('child2Name').value.trim(), birthday: document.getElementById('child2Bday').value },
+  ];
+  persist();
+}
+function renderKids() {
+  const kids = data.children||[];
+  document.getElementById('child1Name').value = (kids[0]||{}).name||'';
+  document.getElementById('child1Bday').value = (kids[0]||{}).birthday||'';
+  document.getElementById('child2Name').value = (kids[1]||{}).name||'';
+  document.getElementById('child2Bday').value = (kids[1]||{}).birthday||'';
+}
+
+// ===========================================================================
+// RECIPES
+// ===========================================================================
+let openCuisineGroups = {}; // tracks which cuisine groups are expanded
+
+function toggleCuisineGroup(cuisine) {
+  openCuisineGroups[cuisine] = !openCuisineGroups[cuisine];
+  const el = document.getElementById('cg-' + cuisine.replace(/[^a-zA-Z0-9]/g,'_'));
+  if (el) el.classList.toggle('open', openCuisineGroups[cuisine]);
+}
+
+function renderRecipes() {
+  renderStepsBanner();
+  const q = (document.getElementById('recipeSearch').value||'').toLowerCase();
+  const list = data.recipes.filter(r => !q || r.name.toLowerCase().includes(q));
+  const el = document.getElementById('recipeList');
+  if (!list.length) { el.innerHTML = `<div class="empty-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg><p>${q?'No matches':'No recipes yet. Tap + Add!'}</p></div>`; }
+  else {
+    const { counts } = getRecipeStats();
+    // Group recipes by cuisine
+    const groups = {};
+    list.forEach(r => {
+      const cuisine = r.cuisine || 'Uncategorized';
+      if (!groups[cuisine]) groups[cuisine] = [];
+      groups[cuisine].push(r);
+    });
+    // Sort cuisine names, but put Uncategorized last
+    const cuisineKeys = Object.keys(groups).sort((a,b) => {
+      if (a === 'Uncategorized') return 1;
+      if (b === 'Uncategorized') return -1;
+      return a.localeCompare(b);
+    });
+
+    function recipeCard(r, showCuisine) {
+      const c = counts[r.id]||0;
+      const badge = c >= 3 ? ' <span style="font-size:11px;background:var(--accent-light);color:var(--accent);padding:1px 6px;border-radius:4px;font-weight:600;">★ Standard</span>' : '';
+      const avg = getAverageRating(r.id);
+      const stars = avg > 0 ? ' · <span style="color:#f5a623;">' + '★'.repeat(Math.round(avg)) + '</span> ' + avg.toFixed(1) : '';
+      return `<div class="card" onclick="showRecipeDetail('${r.id}')"><div class="card-title">${esc(r.name)}${badge}</div><div class="card-sub">${showCuisine&&r.cuisine?esc(r.cuisine)+' · ':''}${r.ingredients.length} ingredient${r.ingredients.length!==1?'s':''}${c?' · made '+c+'x':''}${stars}</div></div>`;
+    }
+
+    // If searching, show flat list (easier to scan results)
+    if (q) {
+      el.innerHTML = list.map(r => recipeCard(r, true)).join('');
+    } else {
+      // Grouped view with collapsible sections
+      el.innerHTML = cuisineKeys.map(cuisine => {
+        const recipes = groups[cuisine];
+        const safeId = cuisine.replace(/[^a-zA-Z0-9]/g,'_');
+        const isOpen = openCuisineGroups[cuisine] === true; // default collapsed
+        const cards = recipes.map(r => recipeCard(r, false)).join('');
+        return `<div id="cg-${safeId}" class="cuisine-group${isOpen?' open':''}">
+          <div class="cuisine-group-header" onclick="toggleCuisineGroup('${esc(cuisine)}')">
+            <h3>${esc(cuisine)}</h3>
+            <div style="display:flex;align-items:center;gap:8px;"><span class="count">${recipes.length} recipe${recipes.length!==1?'s':''}</span><span class="chevron">▼</span></div>
+          </div>
+          <div class="cuisine-group-body">${cards}</div>
+        </div>`;
+      }).join('');
+    }
+  }
+
+  // Discovery section (only show when not searching)
+  const discoverEl = document.getElementById('recipeDiscover');
+  if (q) { discoverEl.innerHTML = ''; return; }
+
+  let dhtml = '';
+
+  // Standards — your greatest hits
+  const standards = getStandards();
+  if (standards.length) {
+    dhtml += '<div style="margin-top:24px;"><h2 style="display:flex;align-items:center;gap:8px;">★ Your Standards</h2><p style="font-size:13px;color:var(--text-secondary);margin-bottom:10px;">Your family\'s greatest hits — made 3+ times.</p>';
+    const { counts } = getRecipeStats();
+    dhtml += standards.slice(0,5).map(r => `<div class="card" onclick="showRecipeDetail('${r.id}')"><div class="card-title">${esc(r.name)}</div><div class="card-sub">${r.cuisine?esc(r.cuisine)+' · ':''}Made ${counts[r.id]} times</div></div>`).join('');
+    dhtml += '</div>';
+  }
+
+  // Bring it back — recipes not made recently
+  const bringBack = getNotMadeRecently(4);
+  if (bringBack.length) {
+    const { lastUsed } = getRecipeStats();
+    dhtml += '<div style="margin-top:24px;"><h2 style="display:flex;align-items:center;gap:8px;">🔄 Bring It Back</h2><p style="font-size:13px;color:var(--text-secondary);margin-bottom:10px;">Recipes you haven\'t made in a while.</p>';
+    dhtml += bringBack.slice(0,5).map(r => {
+      const last = lastUsed[r.id]; const ago = last ? Math.round((Date.now()-new Date(last).getTime())/(7*24*60*60*1000)) : '?';
+      return `<div class="card" onclick="showRecipeDetail('${r.id}')"><div class="card-title">${esc(r.name)}</div><div class="card-sub">${r.cuisine?esc(r.cuisine)+' · ':''}Last made ~${ago} weeks ago</div></div>`;
+    }).join('');
+    dhtml += '</div>';
+  }
+
+  // Try something new
+  const suggestions = getNewSuggestions();
+  if (suggestions.length) {
+    dhtml += '<div style="margin-top:24px;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;"><h2>✨ Try Something New</h2><button class="btn btn-secondary btn-sm" onclick="shuffleSuggestions()">Shuffle</button></div><p style="font-size:13px;color:var(--text-secondary);margin-bottom:10px;">Easy weeknight ideas to add to your book.</p>';
+    dhtml += suggestions.map((s, i) => `<div class="card"><div style="display:flex;justify-content:space-between;align-items:flex-start;"><div style="flex:1;"><div class="card-title">${esc(s.name)}</div><div class="card-sub">${esc(s.cuisine)} · ${esc(s.desc)}</div></div><button class="btn btn-sm btn-primary" onclick="event.stopPropagation();quickAddSuggestion(${i})" style="flex-shrink:0;margin-left:8px;">+ Add</button></div></div>`).join('');
+    dhtml += '</div>';
+  }
+
+  discoverEl.innerHTML = dhtml;
+}
+
+let _detailScale = 1, _detailScaleFor = null;
+function setDetailScale(s) { _detailScale = s; _detailScaleFor = currentDetailId; showRecipeDetail(currentDetailId); }
+function showRecipeDetail(id) {
+  const r = data.recipes.find(x=>x.id===id); if(!r)return;
+  if (_detailScaleFor !== id) { _detailScale = 1; _detailScaleFor = id; }
+  currentDetailId = id;
+  document.getElementById('detailTitle').textContent = r.name;
+  let html = '';
+  const { counts, lastUsed } = getRecipeStats();
+  const useCount = counts[r.id]||0;
+  if (r.cuisine || useCount) {
+    html += '<p style="margin-bottom:8px;font-size:13px;font-weight:600;color:var(--accent);">';
+    if (r.cuisine) html += esc(r.cuisine);
+    if (r.cuisine && useCount) html += ' · ';
+    if (useCount) html += 'Made ' + useCount + ' time' + (useCount!==1?'s':'');
+    if (useCount >= 3) html += ' ★';
+    html += '</p>';
+  }
+  html += `<button class="btn btn-primary" style="width:100%;margin-bottom:14px;" onclick="openCookMode('${r.id}')">👨‍🍳 Cook this</button>`;
+  const appl = detectAppliance(r);
+  if (appl) {
+    const isOven = appl.type === 'oven';
+    const pref = JSON.stringify({ accessory: appl.accessory, mode: appl.mode || '', tempF: appl.tempF, mins: appl.mins });
+    html += `<div class="appliance-banner">
+      <div class="ab-row">${isOven ? '🔥' : '🍲'} Needs the ${isOven ? 'oven' : 'sous vide'} · ${appl.tempF}°F detected</div>
+      <div class="ab-sub">Tap to open the controls, pre-filled from this recipe.</div>
+      <button class="ab-btn" onclick='openAppliancePrefill(${pref})'>${isOven ? 'Oven' : 'Sous vide'} controls →</button>
+    </div>`;
+  }
+  if (safeUrl(r.url)) html += `<p style="margin-bottom:12px;"><a href="${safeUrl(r.url)}" target="_blank" rel="noopener" style="color:var(--blue);font-size:14px;">View original recipe &rarr;</a></p>`;
+  html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><h3>Ingredients' + (r.servings ? ` <span style="font-size:12px;font-weight:600;color:var(--text-secondary);">· serves ${_detailScale === 1 ? r.servings : r.servings + ' → ' + fmtQtyNum(r.servings * _detailScale)}</span>` : '') + '</h3>';
+  html += '<div style="display:flex;gap:4px;">' + [[0.5,'½×'],[1,'1×'],[2,'2×'],[3,'3×']].map(([v,l]) => `<button onclick="setDetailScale(${v})" style="padding:4px 10px;border-radius:999px;border:1px solid ${_detailScale===v?'var(--accent)':'var(--border)'};background:${_detailScale===v?'var(--accent)':'var(--surface)'};color:${_detailScale===v?'#fff':'var(--text)'};font-size:12px;font-weight:600;">${l}</button>`).join('') + '</div></div>';
+  if (r.ingredients.length) {
+    const hasClaudeKey = !!getProxyUrl();
+    html += '<ul style="padding-left:18px;margin-bottom:16px;">';
+    r.ingredients.forEach((ing, idx) => {
+      html += `<li style="margin-bottom:4px;font-size:15px;display:flex;align-items:center;gap:6px;">`;
+      html += `<span>${esc(ing.quantity?scaleQty(ing.quantity,_detailScale)+' ':'')}${esc(ing.name)} <span style="color:var(--text-secondary);font-size:12px;">${esc(ing.category)}</span></span>`;
+      if (hasClaudeKey) html += `<button onclick="event.stopPropagation();suggestSubstitution('${esc(ing.name).replace(/'/g,"\\'")}','${esc(r.name).replace(/'/g,"\\'")}')" style="background:none;border:none;font-size:11px;color:var(--blue);cursor:pointer;padding:1px 4px;white-space:nowrap;" title="Find a swap">🔄 swap</button>`;
+      html += `</li>`;
+    });
+    html += '</ul>';
+  }
+  if (r.notes) {
+    html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><h3>Steps${r.stepsAI ? ' <span style="font-size:11px;font-weight:600;color:var(--accent);background:var(--accent-light);padding:1px 6px;border-radius:4px;vertical-align:middle;">✨ AI-written</span>' : ''}</h3>`;
+    if (getProxyUrl()) html += `<button onclick="rewriteRecipeSteps('${r.id}', this)" style="background:none;border:none;font-size:12px;color:var(--blue);cursor:pointer;">✨ Rewrite</button>`;
+    html += `</div>`;
+    html += `<p style="font-size:15px;white-space:pre-wrap;color:var(--text-secondary);">${esc(r.notes)}</p>`;
+    if (r.prevNotes) html += `<button onclick="restorePrevSteps('${r.id}')" style="background:none;border:none;font-size:12px;color:var(--text-secondary);cursor:pointer;padding:4px 0;">↩︎ Restore previous steps</button>`;
+  } else if (getProxyUrl()) {
+    html += `<button class="btn btn-secondary" style="width:100%;margin-bottom:6px;" onclick="generateRecipeSteps('${r.id}', this)">✨ Write steps with AI</button>`;
+    html += `<p style="font-size:12px;color:var(--text-secondary);margin-bottom:8px;">No steps yet — Claude writes them from the ingredient list. They power Cook Mode and sync to every device.</p>`;
+  }
+
+  // Ratings
+  const avgRating = getAverageRating(r.id);
+  const ratingCount = (r.ratings || []).length;
+  html += `<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);">`;
+  html += `<h3 style="margin-bottom:8px;">Family Rating</h3>`;
+  html += `<div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">`;
+  html += `<div id="detailStars" style="display:flex;gap:2px;">`;
+  for (let s = 1; s <= 5; s++) {
+    const filled = s <= Math.round(avgRating);
+    html += `<button onclick="rateRecipe('${r.id}',${s})" style="background:none;border:none;font-size:24px;cursor:pointer;padding:2px;color:${filled ? '#f5a623' : '#ddd'};">${filled ? '★' : '☆'}</button>`;
+  }
+  html += `</div>`;
+  if (ratingCount) html += `<span id="detailRatingLabel" style="font-size:13px;color:var(--text-secondary);">${avgRating.toFixed(1)} (${ratingCount} rating${ratingCount>1?'s':''})</span>`;
+  else html += `<span id="detailRatingLabel" style="font-size:13px;color:var(--text-secondary);">Not rated yet</span>`;
+  html += `</div></div>`;
+
+  // Nutrition
+  html += `<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">`;
+  html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><h3>Nutrition Estimate</h3>`;
+  const apiKey = localStorage.getItem('nutrition_api_key');
+  if (apiKey) {
+    html += `<button class="btn btn-sm btn-secondary" onclick="fetchNutrition('${r.id}')" style="font-size:11px;">Estimate</button>`;
+  } else {
+    html += `<span style="font-size:11px;color:var(--text-secondary);cursor:pointer;" onclick="showView('sync')">Add free USDA key in Settings</span>`;
+  }
+  html += `</div>`;
+  html += `<div id="nutritionData"></div>`;
+  html += `</div>`;
+
+  document.getElementById('detailContent').innerHTML = html;
+  document.getElementById('recipeDetailModal').classList.add('open');
+
+  // If we have cached nutrition, show it
+  if (r._nutrition) renderNutritionLabel(r._nutrition, r._nutritionMatched, r.ingredients.length, r._nutritionMissed);
+}
+
+function closeDetailModal() { document.getElementById('recipeDetailModal').classList.remove('open'); }
+function editFromDetail() { closeDetailModal(); openRecipeModal(currentDetailId); }
+
+// ===========================================================================
+// NUTRITION
+// ===========================================================================
+// Clean ingredient name for better USDA search matching
+function cleanIngredientName(name) {
+  let n = name.toLowerCase();
+  // Remove quantities/sizes that sometimes end up in the name
+  n = n.replace(/\b\d+[\.\d]*\s*(oz|ounce|lb|pound|g|gram|ml|can|jar|package|pkg|bag|box|bunch|head|clove|stalk|sprig|slice|piece)s?\b/gi, '');
+  // Remove prep descriptions
+  const removeWords = ['diced','chopped','minced','sliced','crushed','ground','shredded','grated',
+    'fresh','frozen','canned','dried','raw','cooked','boneless','skinless','skin-on','bone-in',
+    'thin','thick','finely','roughly','coarsely','to taste','optional','divided','packed',
+    'rinsed','drained','peeled','deveined','trimmed','cubed','halved','quartered','melted',
+    'softened','room temperature','cold','warm','hot','large','medium','small','extra',
+    'low-sodium','reduced-fat','fat-free','whole','organic','unsalted','salted','plain',
+    'all-purpose','self-rising','unbleached','about','approximately'];
+  removeWords.forEach(w => { n = n.replace(new RegExp('\\b'+w.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\b','gi'), ''); });
+  // Remove parenthetical notes
+  n = n.replace(/\([^)]*\)/g, '');
+  // Clean up whitespace and punctuation
+  n = n.replace(/[,;:]/g, ' ').replace(/\s+/g, ' ').trim();
+  return n;
+}
+
+// Try progressively simpler searches until we get a match
+async function searchUSDA(apiKey, originalName) {
+  const cleaned = cleanIngredientName(originalName);
+  // Build search variants: full cleaned name, then fewer words
+  const variants = [cleaned];
+  const words = cleaned.split(' ').filter(w => w.length > 1);
+  if (words.length > 2) variants.push(words.slice(0, 3).join(' '));
+  if (words.length > 1) variants.push(words.slice(0, 2).join(' '));
+  if (words.length > 0) variants.push(words[0]);
+
+  for (const query of variants) {
+    if (!query) continue;
+    // Try broader data types: Survey (FNDDS), SR Legacy, Foundation
+    const resp = await fetch(`https://api.nal.usda.gov/fdc/v1/foods/search?api_key=${encodeURIComponent(apiKey)}&query=${encodeURIComponent(query)}&pageSize=3&dataType=Survey%20(FNDDS),SR%20Legacy,Foundation`, {
+      signal: AbortSignal.timeout(8000)
+    });
+    if (!resp.ok) {
+      if (resp.status === 403 || resp.status === 401) throw new Error('Invalid API key. Check your USDA key in Settings.');
+      continue;
+    }
+    const result = await resp.json();
+    if (result.foods && result.foods.length) {
+      // Pick the best match — prefer one whose description contains our key words
+      const keyWord = words[0] || '';
+      const best = result.foods.find(f => f.description && f.description.toLowerCase().includes(keyWord)) || result.foods[0];
+      return best;
+    }
+  }
+  return null;
+}
+
+async function fetchNutrition(recipeId) {
+  const r = data.recipes.find(x=>x.id===recipeId);
+  if (!r || !r.ingredients.length) { toast('No ingredients to analyze'); return; }
+  const apiKey = localStorage.getItem('nutrition_api_key');
+  if (!apiKey) { toast('Get a free USDA API key — see Settings'); return; }
+  const el = document.getElementById('nutritionData');
+  if (el) el.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">Looking up each ingredient...</p>';
+  try {
+    const totals = { calories: 0, protein_g: 0, carbohydrates_total_g: 0, fat_total_g: 0, fiber_g: 0, sugar_g: 0, sodium_mg: 0 };
+    let matched = 0;
+    const missed = [];
+    for (const ing of r.ingredients) {
+      try {
+        const food = await searchUSDA(apiKey, ing.name);
+        if (!food) { missed.push(ing.name); continue; }
+        const nutrients = {};
+        (food.foodNutrients || []).forEach(n => { nutrients[n.nutrientId] = n.value || 0; });
+        // USDA nutrient IDs: 1008=Energy(kcal), 1003=Protein, 1005=Carbs, 1004=Fat, 1079=Fiber, 2000=Sugar, 1093=Sodium
+        totals.calories += nutrients[1008] || 0;
+        totals.protein_g += nutrients[1003] || 0;
+        totals.carbohydrates_total_g += nutrients[1005] || 0;
+        totals.fat_total_g += nutrients[1004] || 0;
+        totals.fiber_g += nutrients[1079] || 0;
+        totals.sugar_g += nutrients[2000] || 0;
+        totals.sodium_mg += nutrients[1093] || 0;
+        matched++;
+      } catch(innerErr) {
+        if (innerErr.message.includes('Invalid API key')) throw innerErr;
+        missed.push(ing.name);
+      }
+    }
+    if (!matched) {
+      if (el) el.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">Could not find nutrition data for these ingredients.</p>';
+      return;
+    }
+    r._nutrition = totals;
+    r._nutritionMatched = matched;
+    r._nutritionMissed = missed;
+    renderNutritionLabel(totals, matched, r.ingredients.length, missed);
+  } catch(e) {
+    if (el) el.innerHTML = `<p style="font-size:13px;color:var(--red);">${esc(e.message)}</p>`;
+  }
+}
+
+function renderNutritionLabel(n, matched, total, missed) {
+  const el = document.getElementById('nutritionData');
+  if (!el || !n) return;
+  const matchNote = matched && total ? `Based on ${matched}/${total} ingredients` : 'Estimated total';
+  let html = `
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center;">
+      <div style="background:var(--accent-light);padding:10px 6px;border-radius:8px;">
+        <div style="font-size:20px;font-weight:700;color:var(--accent);">${Math.round(n.calories)}</div>
+        <div style="font-size:11px;color:var(--text-secondary);">Calories</div>
+      </div>
+      <div style="background:var(--blue-light);padding:10px 6px;border-radius:8px;">
+        <div style="font-size:20px;font-weight:700;color:var(--blue);">${Math.round(n.protein_g)}g</div>
+        <div style="font-size:11px;color:var(--text-secondary);">Protein</div>
+      </div>
+      <div style="background:var(--green-light);padding:10px 6px;border-radius:8px;">
+        <div style="font-size:20px;font-weight:700;color:var(--green);">${Math.round(n.carbohydrates_total_g)}g</div>
+        <div style="font-size:11px;color:var(--text-secondary);">Carbs</div>
+      </div>
+      <div style="background:var(--red-light);padding:10px 6px;border-radius:8px;">
+        <div style="font-size:20px;font-weight:700;color:var(--red);">${Math.round(n.fat_total_g)}g</div>
+        <div style="font-size:11px;color:var(--text-secondary);">Fat</div>
+      </div>
+      <div style="background:var(--purple-light);padding:10px 6px;border-radius:8px;">
+        <div style="font-size:20px;font-weight:700;color:var(--purple);">${Math.round(n.fiber_g)}g</div>
+        <div style="font-size:11px;color:var(--text-secondary);">Fiber</div>
+      </div>
+      <div style="background:var(--surface);padding:10px 6px;border-radius:8px;border:1px solid var(--border);">
+        <div style="font-size:20px;font-weight:700;color:var(--text);">${Math.round(n.sugar_g)}g</div>
+        <div style="font-size:11px;color:var(--text-secondary);">Sugar</div>
+      </div>
+    </div>
+    <p style="font-size:11px;color:var(--text-secondary);margin-top:6px;text-align:center;">${matchNote} · Per 100g serving · USDA FoodData Central</p>`;
+  if (missed && missed.length) {
+    html += `<p style="font-size:11px;color:var(--text-secondary);margin-top:4px;text-align:center;">Could not find: ${missed.map(m => esc(m)).join(', ')}</p>`;
+  }
+  el.innerHTML = html;
+}
+
+// ===========================================================================
+// FAMILY RATINGS
+// ===========================================================================
+function rateRecipe(recipeId, stars) {
+  const r = data.recipes.find(x=>x.id===recipeId);
+  if (!r) return;
+  if (!r.ratings) r.ratings = [];
+  // Add a new rating (timestamped so each family member's votes accumulate)
+  r.ratings.push({ stars, date: Date.now() });
+  persist();
+  // Update the stars in place instead of rebuilding the whole modal
+  const starsEl = document.getElementById('detailStars');
+  const labelEl = document.getElementById('detailRatingLabel');
+  if (starsEl && labelEl) {
+    const avg = getAverageRating(recipeId);
+    const count = r.ratings.length;
+    starsEl.querySelectorAll('button').forEach((btn, i) => {
+      const filled = i + 1 <= Math.round(avg);
+      btn.style.color = filled ? '#f5a623' : '#ddd';
+      btn.textContent = filled ? '★' : '☆';
+    });
+    labelEl.textContent = avg.toFixed(1) + ' (' + count + ' rating' + (count > 1 ? 's' : '') + ')';
+  } else {
+    showRecipeDetail(recipeId);
+  }
+  toast('Rated ' + stars + ' star' + (stars>1?'s':'') + '!');
+}
+
+function getAverageRating(recipeId) {
+  const r = data.recipes.find(x=>x.id===recipeId);
+  if (!r || !r.ratings || !r.ratings.length) return 0;
+  return r.ratings.reduce((sum, rt) => sum + rt.stars, 0) / r.ratings.length;
+}
+
+function openRecipeModal(editId) {
+  const r = editId ? data.recipes.find(x=>x.id===editId) : null;
+  document.getElementById('recipeModalTitle').textContent = r?'Edit Recipe':'Add Recipe';
+  document.getElementById('recipeEditId').value = r?r.id:'';
+  document.getElementById('recipeName').value = r?r.name:'';
+  document.getElementById('recipeCookMin').value = r&&r.cookMinutes?r.cookMinutes:'';
+  document.getElementById('recipeServings').value = r&&r.servings?r.servings:'';
+  document.getElementById('recipeAppliance').value = (r && r.appliance) || 'auto';
+  document.getElementById('recipeUrl').value = r?(r.url||''):'';
+  document.getElementById('recipeNotes').value = r?(r.notes||''):'';
+  document.getElementById('deleteRecipeBtn').style.display = r?'inline-flex':'none';
+  // Populate cuisine dropdown
+  const cuisineEl = document.getElementById('recipeCuisine');
+  cuisineEl.innerHTML = '<option value="">Select a cuisine...</option>' + getCuisines().map(c=>`<option ${(r&&r.cuisine)===c?'selected':''}>${c}</option>`).join('');
+  document.getElementById('ingredientRows').innerHTML = '';
+  if (r && r.ingredients.length) r.ingredients.forEach(i=>addIngredientRow(i.name,i.quantity,i.category)); else addIngredientRow();
+  document.getElementById('recipeModal').classList.add('open');
+}
+function closeRecipeModal() { document.getElementById('recipeModal').classList.remove('open'); }
+
+function addIngredientRow(name,qty,cat) {
+  const div = document.createElement('div'); div.className='ingr-row';
+  div.innerHTML = `<input type="text" placeholder="Ingredient" value="${esc(name||'')}"><input type="text" placeholder="Qty" value="${esc(qty||'')}"><select>${CATEGORIES.map(c=>`<option ${c===(cat||'Other')?'selected':''}>${c}</option>`).join('')}</select><button onclick="this.parentElement.remove()">&times;</button>`;
+  document.getElementById('ingredientRows').appendChild(div);
+}
+
+function saveRecipe() {
+  const name = document.getElementById('recipeName').value.trim();
+  if (!name) { toast('Enter a recipe name'); return; }
+  const editId = document.getElementById('recipeEditId').value;
+  const ingredients = [];
+  document.querySelectorAll('#ingredientRows .ingr-row').forEach(row => {
+    const inputs = row.querySelectorAll('input');
+    const n = inputs[0].value.trim();
+    if (n) ingredients.push({name:n,quantity:inputs[1].value.trim(),category:row.querySelector('select').value});
+  });
+  const url = document.getElementById('recipeUrl').value.trim();
+  const notes = document.getElementById('recipeNotes').value.trim();
+  const cuisine = document.getElementById('recipeCuisine').value;
+  const cookMinutes = parseInt(document.getElementById('recipeCookMin').value, 10) || 0;
+  const servings = parseInt(document.getElementById('recipeServings').value, 10) || 0;
+  const appliance = document.getElementById('recipeAppliance').value || 'auto';
+  if (editId) { const r = data.recipes.find(x=>x.id===editId); if(r){if(r.notes!==notes)r.stepsAI=false;r.name=name;r.ingredients=ingredients;r.notes=notes;r.url=url;r.cuisine=cuisine;r.cookMinutes=cookMinutes;r.servings=servings;r.appliance=appliance;} }
+  else data.recipes.push({id:uid(),name,ingredients,notes,url,cuisine,cookMinutes,servings,appliance});
+  persist(); closeRecipeModal(); renderRecipes();
+  toast(editId?'Updated':'Recipe added');
+}
+
+function deleteRecipe() {
+  const editId = document.getElementById('recipeEditId').value;
+  if (!editId||!confirm('Delete this recipe?')) return;
+  data.recipes = data.recipes.filter(r=>r.id!==editId);
+  Object.keys(data.mealPlan).forEach(k=>{data.mealPlan[k]=data.mealPlan[k].filter(m=>m.recipeId!==editId);if(!data.mealPlan[k].length)delete data.mealPlan[k];});
+  persist(); closeRecipeModal(); renderRecipes(); toast('Deleted');
+}
+
+// ===========================================================================
+function saveNutritionKey() {
+  const key = document.getElementById('nutritionApiKey').value.trim();
+  if (key) {
+    localStorage.setItem('nutrition_api_key', key);
+    toast('API key saved!');
+  } else {
+    localStorage.removeItem('nutrition_api_key');
+    toast('API key removed');
+  }
+}
+
+// ===========================================================================
+// CLAUDE AI INTEGRATION
+// ===========================================================================
+
+// Baked-in default so Claude features keep working even if iOS clears local storage.
+// A value saved in Settings still overrides this.
+const DEFAULT_PROXY_URL = 'https://claude-proxy.alex-r-gould.workers.dev';
+function getProxyUrl() { return localStorage.getItem('claude_proxy_url') || DEFAULT_PROXY_URL; }
+// Anova connection — the Personal Access Token now lives as a secret on a
+// Cloudflare Worker (anova-proxy-worker.js), so no token ships in this file.
+// Hardcode your Worker URL here (like the Claude proxy) so it survives
+// storage wipes; a value saved in Settings still overrides it.
+const DEFAULT_ANOVA_PROXY = 'wss://anovaoven.alex-r-gould.workers.dev';
+function normalizeAnovaProxy(url) {
+  if (!url) return '';
+  url = url.trim().replace(/\/+$/, '');
+  // Accept https://, wss://, or bare hostname — always connect with wss://
+  url = url.replace(/^(https?:\/\/|wss?:\/\/)+/i, '');
+  return url ? 'wss://' + url : '';
+}
+function getAnovaProxy() { return normalizeAnovaProxy(localStorage.getItem('anova_proxy_url') || DEFAULT_ANOVA_PROXY); }
+// Direct-token fallback for anyone not using the proxy. Never hardcode a PAT here.
+function getAnovaPat() { return (localStorage.getItem('anova_pat') || '').trim(); }
+function anovaConfigured() { return !!(getAnovaProxy() || getAnovaPat()); }
+// Sonos OAuth client id (public; the secret lives on the Worker). Hardcode here once you have it.
+const DEFAULT_SONOS_CLIENT_ID = '1acc19d7-1e49-482d-a3e0-06da4e240dcf';
+function getSonosClientId() { return (localStorage.getItem('sonos_client_id') || DEFAULT_SONOS_CLIENT_ID || '').trim(); }
+// Always the clean folder URL (no index.html), so the redirect URI registered
+// in the Sonos developer portal matches no matter how the app was opened
+function sonosRedirectUri() { return location.origin + location.pathname.replace(/index\.html$/, ''); }
+// Baked-in parenting philosophy fallback (used when none is saved locally).
+const DEFAULT_PHILOSOPHY = `You are a parenting advisor aligned with our family's philosophy. Use the following as your foundation:
+Core principles:
+• Connection before correction. Behavior is communication. Meet the child with empathy first, then redirect. (Dr. Becky Kennedy, No-Drama Discipline)
+• Respect the developing brain. Kids aren't being difficult - they're being young. Regulate yourself first, then co-regulate with them. (The Whole-Brain Child)
+• Communicate with respect. Offer explanations, choices, and genuine listening rather than commands. (How to Talk So Kids Will Listen, Montessori Toddler)
+• Calm, consistent structure. Clear limits, low drama, reliable follow-through. (1-2-3 Magic, Peaceful Parent)
+• Evidence over anxiety. Ground decisions in data and actual risk, not cultural fear. (Emily Oster)
+• Safety as baseline. Follow AAP guidance for health and development decisions.
+Tone: Warm, non-judgmental, practical. Avoid fear-based or shame-based framing. When in doubt, default to connection.`;
+function getPhilosophy() { return localStorage.getItem('parenting_philosophy') || DEFAULT_PHILOSOPHY; }
+
+const CLAUDE_FEATURES = ['mealplan','recipechat','substitutions','calendar','tips','parentchat','steps','fridge'];
+const CLAUDE_MODEL_DEFAULTS = {
+  mealplan: 'claude-sonnet-5',
+  recipechat: 'claude-sonnet-5',
+  substitutions: 'claude-haiku-4-5-20251001',
+  calendar: 'claude-haiku-4-5-20251001',
+  tips: 'claude-sonnet-5',
+  parentchat: 'claude-sonnet-5',
+  steps: 'claude-sonnet-5',
+  fridge: 'claude-sonnet-5',
+};
+
+function getModelForFeature(feature) {
+  let m = localStorage.getItem('claude_model_' + feature);
+  // Migrate previously saved Sonnet 4.6 choices to Sonnet 5
+  if (m === 'claude-sonnet-4-6') { m = 'claude-sonnet-5'; localStorage.setItem('claude_model_' + feature, m); }
+  return m || CLAUDE_MODEL_DEFAULTS[feature] || 'claude-haiku-4-5-20251001';
+}
+
+function normalizeProxyUrl(url) {
+  if (!url) return url;
+  url = url.trim().replace(/\/+$/, ''); // trim trailing slashes
+  // Strip any existing protocol(s) — handles HTTPS://, https://, http://, double-prefixed, etc.
+  url = url.replace(/^(https?:\/\/)+/gi, '');
+  // Re-add clean https://
+  url = 'https://' + url;
+  return url;
+}
+
+function saveClaudeSettings() {
+  const key = document.getElementById('claudeApiKey').value.trim();
+  let proxy = normalizeProxyUrl(document.getElementById('claudeProxyUrl').value);
+  // Update the field so the user sees the corrected URL
+  document.getElementById('claudeProxyUrl').value = proxy;
+  if (key) localStorage.setItem('claude_api_key', key); else localStorage.removeItem('claude_api_key');
+  if (proxy) localStorage.setItem('claude_proxy_url', proxy); else localStorage.removeItem('claude_proxy_url');
+  CLAUDE_FEATURES.forEach(f => {
+    const el = document.getElementById('claudeModel_' + f);
+    if (el) localStorage.setItem('claude_model_' + f, el.value);
+  });
+  toast('Claude settings saved');
+}
+
+function loadClaudeSettings() {
+  const keyEl = document.getElementById('claudeApiKey');
+  const proxyEl = document.getElementById('claudeProxyUrl');
+  if (keyEl) keyEl.value = localStorage.getItem('claude_api_key') || '';
+  if (proxyEl) proxyEl.value = getProxyUrl();
+  CLAUDE_FEATURES.forEach(f => {
+    const el = document.getElementById('claudeModel_' + f);
+    if (el) el.value = getModelForFeature(f);
+  });
+}
+
+function showProxyInstructions() {
+  const el = document.getElementById('claudeProxyHelp');
+  if (el.style.display !== 'none') { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  el.innerHTML = `<strong>Free Cloudflare Worker Setup (3 min):</strong><br>
+1. Go to <a href="https://dash.cloudflare.com/" target="_blank" style="color:var(--blue);">dash.cloudflare.com</a> and create a free account<br>
+2. Go to Workers & Pages → Create → "Hello World" template<br>
+3. Replace the code with the proxy code below, then click Deploy<br>
+4. <strong>Recommended:</strong> Worker → Settings → Variables and Secrets → Add → Type: <em>Secret</em>, Name: <code>ANTHROPIC_API_KEY</code>, Value: your <code>sk-ant-...</code> key. Your key then stays on the Worker and you can leave the API key field above empty.<br>
+5. Optional: add another variable <code>ALLOWED_ORIGIN</code> = your site origin (e.g. <code>https://username.github.io</code>) so only your app can use the proxy<br>
+6. Copy the worker URL (e.g. <code>https://my-proxy.username.workers.dev</code>) into the Proxy URL field above<br><br>
+<strong>Worker code:</strong><br>
+<pre style="background:var(--surface);padding:8px;border-radius:4px;font-size:11px;overflow-x:auto;white-space:pre-wrap;border:1px solid var(--border);">export default {
+  async fetch(request, env) {
+    const allowedOrigin = env.ALLOWED_ORIGIN || '*';
+    const corsHeaders = {
+      'Access-Control-Allow-Origin': allowedOrigin,
+      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, x-api-key, anthropic-version',
+      'Vary': 'Origin',
+    };
+    if (request.method === 'OPTIONS') {
+      return new Response(null, { headers: corsHeaders });
+    }
+    if (request.method !== 'POST') {
+      return new Response('Method not allowed', { status: 405 });
+    }
+    const origin = request.headers.get('Origin') || '';
+    if (env.ALLOWED_ORIGIN &amp;&amp; origin &amp;&amp; origin !== env.ALLOWED_ORIGIN) {
+      return new Response(JSON.stringify({ error: 'Origin not allowed' }), {
+        status: 403,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    }
+    const body = await request.text();
+    const apiKey = env.ANTHROPIC_API_KEY || request.headers.get('x-api-key');
+    if (!apiKey) {
+      return new Response(JSON.stringify({ error: 'No API key configured' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    }
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body
+    });
+    const data = await resp.text();
+    return new Response(data, {
+      status: resp.status,
+      headers: {
+        'Content-Type': 'application/json',
+        ...corsHeaders,
+      }
+    });
+  }
+};</pre>`;
+}
+
+async function callClaude(userPrompt, opts = {}) {
+  const apiKey = localStorage.getItem('claude_api_key');
+  const proxyUrl = normalizeProxyUrl(getProxyUrl());
+  if (!proxyUrl) throw new Error('No proxy URL. Set up a Cloudflare Worker — see Settings.');
+
+  const systemPrompt = opts.system || '';
+  // Model resolution: explicit opts.model > per-feature setting > Haiku default
+  const model = opts.model || (opts.feature ? getModelForFeature(opts.feature) : 'claude-haiku-4-5-20251001');
+  const maxTokens = opts.maxTokens || 1024;
+
+  const body = {
+    model,
+    max_tokens: maxTokens,
+    messages: opts.messages || [{ role: 'user', content: userPrompt }],
+  };
+  if (systemPrompt) body.system = systemPrompt;
+
+  const headers = {
+    'Content-Type': 'application/json',
+    'anthropic-version': '2023-06-01',
+  };
+  // Only send the key if one is set locally — if your Worker has the
+  // ANTHROPIC_API_KEY secret configured, no key needs to live in the browser.
+  if (apiKey) headers['x-api-key'] = apiKey;
+
+  const resp = await fetchWithTimeout(proxyUrl, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
+  }, 30000);
+
+  if (!resp.ok) {
+    const errText = await resp.text().catch(() => '');
+    if (resp.status === 401) throw new Error('Invalid or missing API key. Add ANTHROPIC_API_KEY as a secret on your Worker, or enter a key in Settings.');
+    if (resp.status === 429) throw new Error('Rate limited. Wait a moment and try again.');
+    throw new Error('Claude API error: ' + resp.status + ' ' + errText.substring(0, 100));
+  }
+  const result = await resp.json();
+  // Newer models (Sonnet 5+) may lead with a "thinking" block — take the first TEXT block
+  if (result.content) {
+    const textBlock = result.content.find(c => c.type === 'text' && typeof c.text === 'string');
+    if (textBlock) return textBlock.text;
+  }
+  throw new Error('Unexpected response from Claude');
+}
+
+async function testClaudeConnection() {
+  const el = document.getElementById('claudeStatus');
+  el.innerHTML = '<span style="font-size:12px;color:var(--text-secondary);">Testing...</span>';
+  try {
+    const reply = await callClaude('Reply with exactly: "Connected!" and nothing else.');
+    el.innerHTML = '<span style="font-size:12px;color:var(--green);">✅ ' + esc(reply.trim()) + '</span>';
+  } catch(e) {
+    el.innerHTML = '<span style="font-size:12px;color:var(--red);">❌ ' + esc(e.message) + '</span>';
+  }
+}
+
+// --- SMART MEAL PLANNING ---
+async function smartMealPlan() {
+  const proxyUrl = getProxyUrl();
+  if (!proxyUrl) { toast('Set up Claude AI in Settings first'); showView('sync'); return; }
+
+  // Gather context
+  const emptyDays = [];
+  const ddOrders = (data.doordash || { orders: [] }).orders;
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(currentWeekStart); d.setDate(d.getDate() + i);
+    const dk = dateKey(d);
+    const hasRecipe = (data.mealPlan[dk] || []).length > 0;
+    const hasDD = ddOrders.find(o => o.date === dk);
+    if (!hasRecipe && !hasDD) emptyDays.push({ dk, dayName: d.toLocaleDateString('en-US', { weekday: 'long' }) });
+  }
+  if (!emptyDays.length) { toast('All days are planned!'); return; }
+  if (!data.recipes.length) { toast('Add some recipes first'); return; }
+
+  const recipeList = data.recipes.map(r => `- ${r.name} (${r.cuisine || 'No cuisine'})${r.ratings && r.ratings.length ? ' [rated ' + (r.ratings.reduce((s,x)=>s+x.stars,0)/r.ratings.length).toFixed(1) + '/5]' : ''}`).join('\n');
+  const recentMeals = (data.usageHistory || []).slice(-14).map(u => { const r = data.recipes.find(x=>x.id===u.recipeId); return r ? r.name : ''; }).filter(Boolean);
+  const kidAges = (data.children || []).map(c => { const age = getChildAge(c.birthday); return c.name + (age !== null ? ' ('+age+' months)' : ''); }).join(', ');
+  const month = new Date().toLocaleDateString('en-US', { month: 'long' });
+
+  // Schedule + weather context so the reasons can be specific ("quick dinner — soccer at 6")
+  const emptyDks = new Set(emptyDays.map(d => d.dk));
+  const weekEvents = (gcalEvents || [])
+    .filter(ev => emptyDks.has((ev.start || '').substring(0, 10)))
+    .map(ev => `${(ev.start || '').substring(0, 10)}: ${ev.title}${ev.allDay ? ' (all day)' : ' at ' + new Date(ev.start).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`)
+    .join('\n');
+  let weekWeather = '';
+  if (weatherCache && weatherCache.daily) {
+    const wd = weatherCache.daily;
+    weekWeather = wd.time.map((t, i) => emptyDks.has(t) ? `${t}: ${WMO_LABELS[wd.weathercode[i]] || ''}, high ${Math.round(wd.temperature_2m_max[i])}°F${wd.precipitation_probability_max && wd.precipitation_probability_max[i] > 40 ? ', ' + wd.precipitation_probability_max[i] + '% rain' : ''}` : '').filter(Boolean).join('\n');
+  }
+
+  const btn = document.querySelector('[onclick="smartMealPlan()"]');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Thinking...'; }
+
+  try {
+    const prompt = `Pick meals for these empty days: ${emptyDays.map(d => d.dayName + ' (' + d.dk + ')').join(', ')}.
+
+Available recipes:
+${recipeList}
+
+${recentMeals.length ? 'Recently cooked (avoid repeating): ' + recentMeals.join(', ') : ''}
+${kidAges ? 'Kids in family: ' + kidAges : ''}
+Month: ${month}
+${weekEvents ? '\nFamily schedule on those days:\n' + weekEvents : ''}
+${weekWeather ? '\nWeather forecast:\n' + weekWeather : ''}
+
+Rules:
+- ONLY pick from the available recipes list above — use exact names
+- Vary cuisines across the week
+- Prefer higher-rated recipes
+- Consider the season (${month}) for comfort vs lighter meals
+- If there are young kids, favor kid-friendly options
+- On busy evenings (events near dinner time), pick quicker meals and say so in the reason
+- "reason" must be short (max 12 words), specific, and reference the schedule or weather when relevant
+- "alt" is a different recipe from the list as a backup choice
+
+Reply with ONLY a JSON array like: [{"dk":"2025-03-12","recipe":"Exact Recipe Name","reason":"Quick stir-fry — soccer ends at 6","alt":"Different Exact Recipe Name"}]
+No other text.`;
+
+    const reply = await callClaude(prompt, {
+      feature: 'mealplan',
+      system: 'You are a family meal planning assistant. Reply with ONLY valid JSON, no markdown, no explanation.',
+      maxTokens: 1000,
+    });
+
+    // Parse the JSON response
+    let picks;
+    try {
+      const cleaned = reply.trim().replace(/```json\n?/g, '').replace(/```/g, '').trim();
+      picks = JSON.parse(cleaned);
+    } catch(e) { throw new Error('Claude returned an unexpected format. Try again.'); }
+
+    let filled = 0;
+    for (const pick of picks) {
+      const recipe = data.recipes.find(r => r.name.toLowerCase() === pick.recipe.toLowerCase());
+      if (recipe && emptyDays.find(d => d.dk === pick.dk)) {
+        const altRecipe = pick.alt ? data.recipes.find(r => r.name.toLowerCase() === pick.alt.toLowerCase() && r.id !== recipe.id) : null;
+        data.mealPlan[pick.dk] = [{ meal: 'dinner', recipeId: recipe.id, reason: (pick.reason || '').substring(0, 90), altId: altRecipe ? altRecipe.id : '' }];
+        if (!data.usageHistory) data.usageHistory = [];
+        data.usageHistory.push({ recipeId: recipe.id, date: pick.dk, added: Date.now() });
+        filled++;
+      }
+    }
+    if (filled) {
+      persist(); renderMealPlan();
+      toast(`Claude planned ${filled} meal${filled > 1 ? 's' : ''}!`);
+    } else {
+      toast('No matches found — try again or use Random Fill');
+    }
+  } catch(e) {
+    toast(e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '✨ Smart Plan (AI)'; }
+  }
+}
+
+// --- RECIPE CHAT ASSISTANT ---
+let chatHistory = loadChatHistory('mp_recipe_chat');
+function clearRecipeChat() { chatHistory = []; saveChatHistory('mp_recipe_chat', []); renderChatMessages(); }
+
+function openChatModal() {
+  const proxyUrl = getProxyUrl();
+  if (!proxyUrl) { toast('Set up Claude AI in Settings first'); showView('sync'); return; }
+  document.getElementById('chatModal').classList.add('open');
+  if (!chatHistory.length) {
+    document.getElementById('chatMessages').innerHTML = '<div style="text-align:center;color:var(--text-secondary);font-size:13px;padding:20px;">Ask me anything about cooking! Try:<br><br>"What can I make with chicken and broccoli?"<br>"Suggest a quick weeknight dinner"<br>"What goes well with salmon?"</div>';
+  }
+  document.getElementById('chatInput').focus();
+}
+function closeChatModal() { document.getElementById('chatModal').classList.remove('open'); }
+
+function renderChatMessages() {
+  const el = document.getElementById('chatMessages');
+  el.innerHTML = chatHistory.map(m => {
+    const isUser = m.role === 'user';
+    return `<div style="margin-bottom:12px;display:flex;${isUser ? 'justify-content:flex-end' : 'justify-content:flex-start'};">
+      <div style="max-width:85%;padding:10px 14px;border-radius:${isUser ? '16px 16px 4px 16px' : '16px 16px 16px 4px'};background:${isUser ? 'var(--accent)' : 'var(--surface)'};color:${isUser ? 'white' : 'var(--text)'};font-size:14px;line-height:1.5;white-space:pre-wrap;">${esc(m.content)}</div>
+    </div>`;
+  }).join('');
+  el.scrollTop = el.scrollHeight;
+}
+
+async function sendChatMessage() {
+  const input = document.getElementById('chatInput');
+  const msg = input.value.trim();
+  if (!msg) return;
+  input.value = '';
+
+  chatHistory.push({ role: 'user', content: msg });
+  renderChatMessages();
+
+  // Add thinking indicator
+  const el = document.getElementById('chatMessages');
+  el.innerHTML += '<div id="chatThinking" style="margin-bottom:12px;"><div style="display:inline-block;padding:12px 16px;border-radius:16px 16px 16px 4px;background:var(--surface);"><span class="typing-dots"><span></span><span></span><span></span></span></div></div>';
+  el.scrollTop = el.scrollHeight;
+  document.getElementById('chatSendBtn').disabled = true;
+
+  try {
+    // Compact index of the whole book; full ingredients only for recipes
+    // that have come up in this conversation (keeps the prompt small)
+    const recentText = chatHistory.slice(-6).map(m => m.content).join(' ').toLowerCase();
+    const mentioned = data.recipes.filter(r => r.name && recentText.includes(r.name.toLowerCase())).slice(0, 8);
+    const recipeIndex = data.recipes.slice(0, 60).map(r => `${r.name} (${r.cuisine || '?'})`).join('; ');
+    const recipeDetails = mentioned.map(r => `${r.name}: ${(r.ingredients||[]).map(i=>i.name).join(', ')}`).join('\n');
+    const system = `You are a helpful family cooking assistant for the Gould family. Be concise and friendly.
+
+The family's recipe book (name + cuisine): ${recipeIndex}
+${recipeDetails ? '\nIngredients for recipes in this conversation:\n' + recipeDetails : ''}
+
+When suggesting recipes from their book, mention them by name. You can also suggest new recipe ideas they don't have yet. If you need a recipe's ingredients and they aren't listed above, ask the user to name the recipe. Keep responses short — 2-3 paragraphs max.`;
+
+    const reply = await callClaude('', {
+      feature: 'recipechat',
+      system,
+      messages: chatHistory.slice(-10), // last 10 messages for context
+      maxTokens: 800,
+    });
+    chatHistory.push({ role: 'assistant', content: reply });
+  } catch(e) {
+    chatHistory.push({ role: 'assistant', content: 'Sorry, I hit an error: ' + e.message });
+  }
+  saveChatHistory('mp_recipe_chat', chatHistory);
+  document.getElementById('chatSendBtn').disabled = false;
+  renderChatMessages();
+}
+
+// --- INGREDIENT SUBSTITUTIONS ---
+function closeSubModal() { document.getElementById('subModal').classList.remove('open'); }
+
+let _currentSubRecipe = '';
+let _currentSubIngredient = '';
+
+async function suggestSubstitution(ingredientName, recipeName) {
+  const proxyUrl = getProxyUrl();
+  if (!proxyUrl) { toast('Set up Claude AI in Settings first'); return; }
+
+  _currentSubRecipe = recipeName;
+  _currentSubIngredient = ingredientName;
+
+  document.getElementById('subModal').classList.add('open');
+  document.getElementById('subContent').innerHTML = `<p style="color:var(--text-secondary);margin-bottom:10px;">Finding swaps for <strong>${esc(ingredientName)}</strong>...</p><div class="skel" style="width:85%;"></div><div class="skel" style="width:70%;"></div><div class="skel" style="width:80%;"></div>`;
+
+  try {
+    const kidAges = (data.children || []).map(c => c.name).join(', ');
+    const prompt = `Suggest 3-4 substitutions for "${ingredientName}" in the recipe "${recipeName}".
+${kidAges ? 'This is for a family with kids (' + kidAges + '), so note any kid-friendliness.' : ''}
+
+Reply ONLY as JSON array: [{"name":"substitute name","note":"brief note on how to use it and how it changes the dish"}]
+No markdown, no explanation, just JSON.`;
+
+    const reply = await callClaude(prompt, {
+      feature: 'substitutions',
+      system: 'You are a helpful cooking assistant. Reply with ONLY valid JSON.',
+      maxTokens: 500,
+    });
+
+    const cleaned = reply.trim().replace(/```json\n?/g, '').replace(/```/g, '').trim();
+    let subs;
+    try { subs = JSON.parse(cleaned); } catch(e) {
+      // Fallback: show as text
+      document.getElementById('subContent').innerHTML = `<h3 style="margin-bottom:8px;">Swaps for: ${esc(ingredientName)}</h3><div style="white-space:pre-wrap;">${esc(reply)}</div>`;
+      return;
+    }
+
+    let html = `<h3 style="margin-bottom:12px;">Swaps for: ${esc(ingredientName)}</h3>`;
+    subs.forEach((sub, i) => {
+      html += `<div style="padding:10px;background:var(--bg);border-radius:var(--radius);margin-bottom:8px;display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">`;
+      html += `<div><strong style="font-size:14px;">${esc(sub.name)}</strong><div style="font-size:12px;color:var(--text-secondary);margin-top:2px;">${esc(sub.note || '')}</div></div>`;
+      html += `<button class="btn btn-sm btn-primary" onclick="applySubstitution('${esc(sub.name).replace(/'/g,"\\'")}')">Use this</button>`;
+      html += `</div>`;
+    });
+    html += `<p style="font-size:11px;color:var(--text-secondary);margin-top:8px;">Clicking "Use this" will update the recipe and your grocery list.</p>`;
+    document.getElementById('subContent').innerHTML = html;
+  } catch(e) {
+    document.getElementById('subContent').innerHTML = `<p style="color:var(--red);">${esc(e.message)}</p>`;
+  }
+}
+
+function applySubstitution(newIngredientName) {
+  // Find recipe and ingredient, swap the name
+  const recipe = data.recipes.find(r => r.name === _currentSubRecipe);
+  if (!recipe) { toast('Recipe not found'); return; }
+  const ing = recipe.ingredients.find(i => i.name.toLowerCase() === _currentSubIngredient.toLowerCase());
+  if (!ing) { toast('Ingredient not found'); return; }
+  const oldName = ing.name;
+  ing.name = newIngredientName;
+  persist();
+  closeSubModal();
+  // Re-render the recipe detail to show updated ingredient
+  if (currentDetailId) showRecipeDetail(currentDetailId);
+  toast(`Swapped "${oldName}" → "${newIngredientName}"`);
+}
+
+// --- AI RECIPE STEPS ---
+// Writes cook-mode steps for recipes that don't have any, using the recipe's
+// own ingredient list. Steps land in r.notes, so persist() syncs them to
+// Firebase and every device picks them up automatically.
+function recipesMissingSteps() {
+  return data.recipes.filter(r => !(r.notes || '').trim());
+}
+
+function buildStepsPrompt(r) {
+  const ing = (r.ingredients || []).map(i => '- ' + (i.quantity ? i.quantity + ' ' : '') + i.name).join('\n');
+  return `Write step-by-step cooking instructions for this family dinner recipe.
+
+Recipe: ${r.name}${r.cuisine ? ' (' + r.cuisine + ' cuisine)' : ''}
+${r.cookMinutes ? 'Target total time: about ' + r.cookMinutes + ' minutes.' : ''}
+${r.servings ? 'Serves ' + r.servings + '.' : ''}
+Ingredients:
+${ing || '(no ingredient list saved — write a standard version of this dish)'}
+
+Rules:
+- 5 to 10 steps, each a single action a busy home cook can read at a glance from across the kitchen
+- Keep each step under 25 words
+- Include specific times and temperatures ("5-6 minutes", "400°F") — the app turns these into tap-to-start timers
+- Use only the listed ingredients plus pantry basics (salt, pepper, oil, water, butter)
+- Include quantities where they help ("add 3 tbsp soy sauce")
+- No step numbers, no headers, no commentary
+
+Reply ONLY as JSON: {"steps":["first step","second step"]}`;
+}
+
+async function generateStepsForRecipe(r) {
+  const reply = await callClaude(buildStepsPrompt(r), {
+    feature: 'steps',
+    system: 'You are a practical home-cooking assistant writing concise recipe steps for a family app. Reply with ONLY valid JSON.',
+    maxTokens: 900,
+  });
+  const cleaned = reply.trim().replace(/```json\n?/g, '').replace(/```/g, '').trim();
+  let parsed;
+  try { parsed = JSON.parse(cleaned); } catch (e) { throw new Error('Could not parse steps for ' + r.name); }
+  const arr = Array.isArray(parsed) ? parsed : (parsed && Array.isArray(parsed.steps) ? parsed.steps : []);
+  const steps = arr.filter(s => typeof s === 'string' && s.trim())
+    .map(s => s.trim().replace(/^(step\s*)?\d+[\.\):]\s*/i, ''));
+  if (steps.length < 2) throw new Error('No usable steps returned for ' + r.name);
+  // Re-find by id at write time — a Firestore snapshot mid-batch can replace
+  // the recipes array, and we don't want to write steps onto a stale object
+  const live = data.recipes.find(x => x.id === r.id) || r;
+  live.notes = steps.join('\n');
+  live.stepsAI = true; // flag so you know these were AI-written, not yours
+  persist();
+  return steps;
+}
+
+// Per-recipe button (recipe detail + cook mode)
+async function generateRecipeSteps(id, btn) {
+  const r = data.recipes.find(x => x.id === id); if (!r) return;
+  if (!getProxyUrl()) { toast('Set up Claude AI in Settings first'); return; }
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Writing steps…'; }
+  try {
+    await generateStepsForRecipe(r);
+    toast('✨ Steps written for ' + r.name);
+    if (currentDetailId === id && document.getElementById('recipeDetailModal').classList.contains('open')) showRecipeDetail(id);
+    if (_cook && _cook.recipe.id === id) { _cook.steps = parseCookSteps(r); _cook.idx = 0; renderCookStep(); }
+    renderStepsBanner();
+  } catch (e) {
+    toast('⚠️ ' + e.message);
+    if (btn) { btn.disabled = false; btn.textContent = '✨ Write steps with AI'; }
+  }
+}
+
+// Rewrite existing steps (keeps the old version for one-tap restore)
+async function rewriteRecipeSteps(id, btn) {
+  const r = data.recipes.find(x => x.id === id); if (!r) return;
+  if (!confirm('Have Claude rewrite the steps for "' + r.name + '"? Your current version is kept and can be restored.')) return;
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Rewriting…'; }
+  const oldNotes = r.notes;
+  try {
+    r.notes = ''; // so the generator treats it as fresh
+    await generateStepsForRecipe(r);
+    const live = data.recipes.find(x => x.id === id) || r;
+    live.prevNotes = oldNotes;
+    persist();
+    toast('✨ Steps rewritten — old version kept');
+    if (currentDetailId === id) showRecipeDetail(id);
+  } catch (e) {
+    const live = data.recipes.find(x => x.id === id) || r;
+    if (!(live.notes || '').trim()) live.notes = oldNotes; // put it back on failure
+    persist();
+    toast('⚠️ ' + e.message);
+    if (currentDetailId === id) showRecipeDetail(id);
+  }
+}
+function restorePrevSteps(id) {
+  const r = data.recipes.find(x => x.id === id); if (!r || !r.prevNotes) return;
+  const cur = r.notes;
+  r.notes = r.prevNotes;
+  r.prevNotes = cur; // swap, so you can flip back and forth
+  r.stepsAI = false;
+  persist();
+  showRecipeDetail(id);
+  toast('Previous steps restored');
+}
+
+// Batch: write steps for every recipe that has none, a few at a time
+let _stepsBatch = null; // { done, total } while running
+async function generateAllMissingSteps() {
+  if (_stepsBatch) return;
+  if (!getProxyUrl()) { toast('Set up Claude AI in Settings first'); showView('sync'); return; }
+  const missing = recipesMissingSteps();
+  if (!missing.length) { toast('Every recipe already has steps!'); return; }
+  if (!confirm('Have Claude write steps for ' + missing.length + ' recipe' + (missing.length !== 1 ? 's' : '') + '? They sync to all devices, and you can edit any recipe to tweak them.')) return;
+  _stepsBatch = { done: 0, total: missing.length };
+  renderStepsBanner();
+  const queue = [...missing];
+  const failed = [];
+  const worker = async () => {
+    while (queue.length && _stepsBatch) {
+      const r = queue.shift();
+      try { await generateStepsForRecipe(r); }
+      catch (e) { failed.push(r.name); console.log('Steps failed for', r.name, e); }
+      if (_stepsBatch) { _stepsBatch.done++; renderStepsBanner(); }
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);
+  _stepsBatch = null;
+  renderRecipes();
+  toast(failed.length
+    ? 'Steps written for ' + (missing.length - failed.length) + ' recipes — ' + failed.length + ' failed, tap ✨ Write all to retry those'
+    : '✨ Steps written for all ' + missing.length + ' recipes!');
+}
+
+function renderStepsBanner() {
+  const el = document.getElementById('stepsBanner'); if (!el) return;
+  if (_stepsBatch) {
+    const pct = Math.round(_stepsBatch.done / _stepsBatch.total * 100);
+    el.innerHTML = `<div class="card" style="margin-bottom:12px;">
+      <div class="card-title">✨ Writing steps… ${_stepsBatch.done}/${_stepsBatch.total}</div>
+      <div style="height:6px;border-radius:3px;background:var(--accent-light);margin:8px 0 4px;overflow:hidden;"><div style="height:100%;width:${pct}%;background:var(--accent);border-radius:3px;transition:width .3s;"></div></div>
+      <div class="card-sub">Keep the app open — each recipe syncs to every device as it finishes.</div>
+    </div>`;
+    return;
+  }
+  const missing = recipesMissingSteps();
+  if (!missing.length || !getProxyUrl()) { el.innerHTML = ''; return; }
+  el.innerHTML = `<div class="card" style="margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;gap:10px;">
+    <div style="flex:1;"><div class="card-title">${missing.length} recipe${missing.length !== 1 ? 's' : ''} without steps</div><div class="card-sub">Have Claude write Cook Mode steps from each ingredient list.</div></div>
+    <button class="btn btn-primary btn-sm" style="flex-shrink:0;" onclick="generateAllMissingSteps()">✨ Write all</button>
+  </div>`;
+}
+
+// --- FRIDGE PHOTO → DINNER IDEAS (Claude vision) ---
+function closeFridgeIdeas() { document.getElementById('fridgeIdeasModal').classList.remove('open'); }
+
+function _resizeImageToJpeg(file, maxDim) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const s = Math.min(1, maxDim / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      resolve(c.toDataURL('image/jpeg', 0.8));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not read that image')); };
+    img.src = url;
+  });
+}
+
+async function fridgePhotoPicked(input) {
+  const file = input.files && input.files[0];
+  input.value = '';
+  if (!file) return;
+  if (!getProxyUrl()) { toast('Set up Claude AI in Settings first'); showView('sync'); return; }
+  const modal = document.getElementById('fridgeIdeasModal');
+  const el = document.getElementById('fridgeIdeasContent');
+  modal.classList.add('open');
+  el.innerHTML = '<p style="color:var(--text-secondary);margin-bottom:10px;">Looking at what you\'ve got…</p><div class="skel" style="width:85%;"></div><div class="skel" style="width:70%;"></div><div class="skel" style="width:80%;"></div>';
+  try {
+    const dataUrl = await _resizeImageToJpeg(file, 1024);
+    const b64 = dataUrl.split(',')[1];
+    const book = data.recipes.map(r => `- ${r.name} [${r.id}]: ${(r.ingredients || []).map(i => i.name).join(', ')}`).join('\n');
+    const prompt = `This is a photo of our fridge/pantry. Identify the usable ingredients you can see, then suggest 3-5 family dinners we could make tonight.
+
+Prefer recipes from our book when the visible ingredients roughly cover them. Our recipe book:
+${book || '(empty)'}
+
+Reply ONLY as JSON:
+{"seen":["ingredient","..."],"ideas":[{"name":"dish","recipeId":"id from book or empty string","uses":["visible ingredients used"],"missing":["items we'd still need"],"note":"one short sentence"}]}`;
+    const reply = await callClaude('', {
+      feature: 'fridge',
+      system: 'You are a practical family dinner assistant. Reply with ONLY valid JSON.',
+      maxTokens: 1200,
+      messages: [{ role: 'user', content: [
+        { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b64 } },
+        { type: 'text', text: prompt }
+      ] }],
+    });
+    const cleaned = reply.trim().replace(/```json\n?/g, '').replace(/```/g, '').trim();
+    let res;
+    try { res = JSON.parse(cleaned); } catch (e) {
+      el.innerHTML = `<div style="white-space:pre-wrap;">${esc(reply)}</div>`; return;
+    }
+    let html = '';
+    if (res.seen && res.seen.length) {
+      html += '<p style="font-size:12px;color:var(--text-secondary);margin-bottom:6px;">Spotted in your fridge:</p><div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:14px;">';
+      html += res.seen.map(s => `<span style="background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:3px 10px;font-size:12px;">${esc(s)}</span>`).join('');
+      html += '</div>';
+    }
+    (res.ideas || []).forEach((idea, i) => {
+      const bookRecipe = idea.recipeId && data.recipes.find(r => r.id === idea.recipeId);
+      html += `<div style="padding:12px;background:var(--bg);border-radius:var(--radius);margin-bottom:10px;">`;
+      html += `<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">`;
+      html += `<strong style="font-size:15px;">${esc(idea.name)}${bookRecipe ? ' <span style="font-size:10px;color:var(--accent);background:var(--accent-light);padding:1px 6px;border-radius:4px;">in your book</span>' : ''}</strong>`;
+      if (bookRecipe) html += `<button class="btn btn-sm btn-primary" style="flex-shrink:0;" onclick="closeFridgeIdeas();showRecipeDetail('${bookRecipe.id}')">Open</button>`;
+      html += `</div>`;
+      if (idea.note) html += `<div style="font-size:12px;color:var(--text-secondary);margin-top:3px;">${esc(idea.note)}</div>`;
+      if (idea.uses && idea.uses.length) html += `<div style="font-size:12px;margin-top:5px;">✅ Uses: ${esc(idea.uses.join(', '))}</div>`;
+      if (idea.missing && idea.missing.length) {
+        html += `<div style="font-size:12px;margin-top:2px;">🛒 Missing: ${esc(idea.missing.join(', '))} <button onclick='addMissingToGrocery(${JSON.stringify(idea.missing).replace(/'/g, "\\'")})' style="background:none;border:none;color:var(--blue);font-size:11px;cursor:pointer;">+ add to list</button></div>`;
+      }
+      html += `</div>`;
+    });
+    if (!html) html = '<p style="color:var(--text-secondary);">No suggestions came back — try a clearer photo.</p>';
+    el.innerHTML = html;
+  } catch (e) {
+    el.innerHTML = `<p style="color:var(--red);">${esc(e.message)}</p>`;
+  }
+}
+
+function addMissingToGrocery(items) {
+  if (!data.groceryExtras) data.groceryExtras = [];
+  let added = 0;
+  (items || []).forEach(name => {
+    if (!name) return;
+    const exists = data.groceryExtras.some(x => (x.name || '').toLowerCase() === name.toLowerCase());
+    if (!exists) { data.groceryExtras.push({ name, category: 'Other' }); added++; }
+  });
+  persist();
+  toast(added ? '🛒 Added ' + added + ' item' + (added !== 1 ? 's' : '') + ' to the grocery list' : 'Already on the list');
+}
+
+// --- CLAUDE CALENDAR SUMMARIES ---
+async function generateCalendarSummary(events, weekLabel) {
+  const proxyUrl = getProxyUrl();
+  if (!proxyUrl) return null;
+
+  const kidAges = (data.children || []).map(c => {
+    const age = getChildAge(c.birthday);
+    return c.name + (age !== null ? ' (' + Math.floor(age/12) + ' years)' : '');
+  }).join(', ');
+
+  const eventList = events.map(e => `${e.date}: ${e.title}${e.time ? ' at ' + e.time : ' (all day)'}${e.calName ? ' [' + e.calName + ']' : ''}`).join('\n');
+  if (!eventList) return null;
+
+  // Include weather for the relevant period
+  let weatherSnippet = '';
+  if (weatherCache && weatherCache.daily) {
+    const wd = weatherCache.daily;
+    const lines = [];
+    for (let i = 0; i < wd.time.length; i++) {
+      const d = new Date(wd.time[i] + 'T12:00:00');
+      const label = WMO_LABELS[wd.weathercode[i]] || '';
+      const hi = Math.round(wd.temperature_2m_max[i]);
+      const rain = wd.precipitation_probability_max ? wd.precipitation_probability_max[i] : 0;
+      lines.push(`${SHORT_DAYS[d.getDay()]}: ${label}, ${hi}°F${rain > 10 ? ', ' + rain + '% rain' : ''}`);
+    }
+    if (lines.length) weatherSnippet = '\nWeather: ' + lines.join('; ');
+  }
+
+  const prompt = `Here are the family's calendar events for ${weekLabel}:
+
+${eventList}
+
+${kidAges ? 'Family kids: ' + kidAges : ''}${weatherSnippet}
+
+Write a warm, concise 2-3 sentence summary of the week. Mention any highlights or things to prepare for. Weave in relevant weather (e.g. suggest indoor/outdoor activities, remind about rain gear). Keep it casual and encouraging.`;
+
+  try {
+    return await callClaude(prompt, {
+      feature: 'calendar',
+      system: 'You are a warm family assistant. Be concise, practical, and encouraging. No bullet points — flowing sentences only.',
+      maxTokens: 250,
+    });
+  } catch(e) {
+    console.log('[Claude] Calendar summary error:', e.message);
+    return null;
+  }
+}
+
+// ===========================================================================
+// BLOG FEED
+// ===========================================================================
+let blogFeedCache = {};
+let blogFeedLoading = false;
+let blogFeedLastError = '';
+
+function renderBlogsList() {
+  const el = document.getElementById('blogsList');
+  if (!el) return;
+  const blogs = data.blogs || [];
+  if (!blogs.length) { el.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">No blogs added yet.</p>'; return; }
+  el.innerHTML = blogs.map((b,i) => `<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;${i<blogs.length-1?'border-bottom:1px solid var(--border);':''}"><span style="font-size:14px;">${esc(b.name||b.url)}</span><button onclick="removeBlog(${i})" style="background:none;border:none;color:var(--red);font-size:16px;cursor:pointer;">✕</button></div>`).join('');
+}
+
+function addBlog() {
+  let url = document.getElementById('newBlogUrl').value.trim();
+  if (!url) return;
+  // Normalize: strip protocol, trailing slash, path for base domain
+  url = url.replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+  // Extract display name from domain
+  let name = url.replace(/^www\./, '').split('/')[0];
+  // Store the base domain (we'll try variations when fetching)
+  const baseUrl = 'https://' + url.split('/')[0];
+  if (!data.blogs) data.blogs = [];
+  if (data.blogs.find(b => b.url === baseUrl || b.name === name)) { toast('Already added!'); return; }
+  data.blogs.push({ url: baseUrl, name });
+  document.getElementById('newBlogUrl').value = '';
+  persist(); renderBlogsList();
+  toast('Added ' + name);
+  fetchBlogFeeds();
+}
+
+function removeBlog(i) {
+  if (!data.blogs) return;
+  const name = data.blogs[i].name;
+  data.blogs.splice(i, 1);
+  persist(); renderBlogsList();
+  toast('Removed ' + name);
+}
+
+// Safe timeout fetch — AbortSignal.timeout() may not exist on older browsers
+function fetchWithTimeout(url, opts, ms) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms || 10000);
+  return fetch(url, { ...opts, signal: controller.signal }).finally(() => clearTimeout(timer));
+}
+
+// Parse RSS/Atom XML into standardized items array
+function parseRssXml(xmlText) {
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(xmlText, 'text/xml');
+    if (doc.querySelector('parsererror')) return null;
+    const items = [];
+    // RSS 2.0
+    doc.querySelectorAll('item').forEach(item => {
+      const getText = tag => { const el = item.querySelector(tag); return el ? el.textContent.trim() : ''; };
+      const desc = getText('description').replace(/<[^>]*>/g, '').substring(0, 150);
+      // Try to find image in content or media
+      let thumb = '';
+      const mediaContent = item.querySelector('content[url]');
+      if (mediaContent) thumb = mediaContent.getAttribute('url') || '';
+      if (!thumb) {
+        const enclosure = item.querySelector('enclosure[url]');
+        if (enclosure && (enclosure.getAttribute('type')||'').startsWith('image')) thumb = enclosure.getAttribute('url') || '';
+      }
+      if (!thumb) {
+        const imgMatch = (item.querySelector('description')||{textContent:''}).textContent.match(/<img[^>]+src=["']([^"']+)["']/);
+        if (imgMatch) thumb = imgMatch[1];
+      }
+      items.push({ title: getText('title'), link: getText('link'), pubDate: getText('pubDate'), description: desc, thumbnail: thumb });
+    });
+    if (items.length) return items.slice(0, 10);
+    // Atom
+    doc.querySelectorAll('entry').forEach(entry => {
+      const getText = tag => { const el = entry.querySelector(tag); return el ? el.textContent.trim() : ''; };
+      const linkEl = entry.querySelector('link[href]');
+      const link = linkEl ? linkEl.getAttribute('href') : '';
+      const desc = getText('summary').replace(/<[^>]*>/g, '').substring(0, 150) || getText('content').replace(/<[^>]*>/g, '').substring(0, 150);
+      items.push({ title: getText('title'), link, pubDate: getText('published') || getText('updated'), description: desc, thumbnail: '' });
+    });
+    return items.length ? items.slice(0, 10) : null;
+  } catch(e) { return null; }
+}
+
+// Strategy 1: RSS-to-JSON services (they handle CORS + parsing)
+async function tryJsonServices(feedUrl) {
+  const services = [
+    { name: 'rss2json', mkUrl: u => `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(u)}&count=10`,
+      parse: j => { if (j.status==='ok' && j.items && j.items.length) return j.items.map(i => ({
+        title: i.title, link: i.link, pubDate: i.pubDate,
+        description: i.description ? i.description.replace(/<[^>]*>/g,'').substring(0,150) : '',
+        thumbnail: i.thumbnail || (i.enclosure&&i.enclosure.link) || '',
+      })); return null; }
+    },
+    { name: 'feed2json', mkUrl: u => `https://www.toptal.com/developers/feed2json/convert?url=${encodeURIComponent(u)}`,
+      parse: j => { if (j.items && j.items.length) return j.items.map(i => ({
+        title: i.title||'', link: i.url||i.id||'',
+        pubDate: i.date_published||i.date_modified||'',
+        description: (i.content_text||i.summary||'').replace(/<[^>]*>/g,'').substring(0,150),
+        thumbnail: i.image||i.banner_image||'',
+      })); return null; }
+    },
+  ];
+  for (const svc of services) {
+    try {
+      console.log('[BlogFeed] Trying', svc.name, 'for', feedUrl);
+      const resp = await fetchWithTimeout(svc.mkUrl(feedUrl), {}, 12000);
+      if (!resp.ok) { console.log('[BlogFeed]', svc.name, 'HTTP', resp.status); continue; }
+      const result = await resp.json();
+      const items = svc.parse(result);
+      if (items && items.length) { console.log('[BlogFeed] ✓', svc.name, 'returned', items.length, 'items'); return items; }
+      console.log('[BlogFeed]', svc.name, 'returned no items');
+    } catch(e) { console.log('[BlogFeed]', svc.name, 'error:', e.message); }
+  }
+  return null;
+}
+
+// Strategy 2: Fetch raw XML via CORS proxy and parse client-side
+async function tryDirectXmlFetch(feedUrl) {
+  const proxies = [
+    { name: 'corsproxy.io', mk: u => `https://corsproxy.io/?${encodeURIComponent(u)}` },
+    { name: 'allorigins', mk: u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}` },
+    { name: 'codetabs', mk: u => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}` },
+  ];
+  for (const proxy of proxies) {
+    try {
+      console.log('[BlogFeed] Trying XML via', proxy.name, 'for', feedUrl);
+      const resp = await fetchWithTimeout(proxy.mk(feedUrl), {}, 12000);
+      if (!resp.ok) { console.log('[BlogFeed]', proxy.name, 'HTTP', resp.status); continue; }
+      const text = await resp.text();
+      if (text.length < 200 || !text.includes('<')) { console.log('[BlogFeed]', proxy.name, 'response too short or not XML'); continue; }
+      const items = parseRssXml(text);
+      if (items && items.length) { console.log('[BlogFeed] ✓', proxy.name, 'parsed', items.length, 'items from XML'); return items; }
+      console.log('[BlogFeed]', proxy.name, 'XML parse returned no items');
+    } catch(e) { console.log('[BlogFeed]', proxy.name, 'error:', e.message); }
+  }
+  return null;
+}
+
+// Try to fetch a feed using all strategies
+async function tryFetchFeed(feedUrl) {
+  // Strategy 1: JSON services (fastest, most reliable if they're up)
+  let items = await tryJsonServices(feedUrl);
+  if (items) return items;
+  // Strategy 2: Raw XML via CORS proxy + client-side parse
+  items = await tryDirectXmlFetch(feedUrl);
+  return items;
+}
+
+async function fetchBlogFeeds() {
+  if (blogFeedLoading) return;
+  const blogs = data.blogs || [];
+  if (!blogs.length) { renderBlogFeed([]); return; }
+  blogFeedLoading = true;
+  blogFeedLastError = '';
+  renderBlogFeed([]); // show loading state
+  console.log('[BlogFeed] Starting fetch for', blogs.length, 'blog(s)');
+  const allItems = [];
+  for (const blog of blogs) {
+    const base = blog.url.replace(/\/+$/, '');
+    let host = '';
+    try { host = new URL(base).hostname; } catch(e) {}
+    const withWww = host.startsWith('www.') ? base : base.replace('://' + host, '://www.' + host);
+    const withoutWww = host.startsWith('www.') ? base.replace('://www.', '://') : base;
+
+    let fetched = false;
+    // Build feed URL candidates — most WordPress blogs use /feed/
+    const feedPaths = ['/feed/', '/feed', '/rss/', '/rss.xml', '/atom.xml', '/blog/feed/', '/blog/feed'];
+    const candidates = [];
+    for (const path of feedPaths) {
+      candidates.push(withWww + path);
+      if (withoutWww !== withWww) candidates.push(withoutWww + path);
+    }
+    // De-duplicate
+    const feedUrls = [...new Set(candidates)];
+
+    for (const feedUrl of feedUrls) {
+      if (fetched) break;
+      const items = await tryFetchFeed(feedUrl);
+      if (items && items.length) {
+        items.forEach(item => allItems.push({ ...item, blogName: blog.name }));
+        fetched = true;
+        console.log('[BlogFeed] ✓ Found feed for', blog.name, 'at', feedUrl);
+      }
+    }
+    if (!fetched) {
+      console.warn('[BlogFeed] ✗ No feed found for', blog.name);
+      blogFeedLastError += (blogFeedLastError ? '; ' : '') + blog.name + ': no feed found';
+    }
+  }
+  // Sort by date (newest first)
+  allItems.sort((a,b) => new Date(b.pubDate||0) - new Date(a.pubDate||0));
+  blogFeedCache = { items: allItems.slice(0, 15), fetchedAt: Date.now() };
+  blogFeedLoading = false;
+  console.log('[BlogFeed] Done.', allItems.length, 'total items');
+  renderBlogFeed(blogFeedCache.items);
+}
+
+// Diagnostic: test all services for each blog and report what works
+async function testBlogFeeds() {
+  const el = document.getElementById('blogDiag');
+  if (!el) return;
+  const blogs = data.blogs || [];
+  if (!blogs.length) { el.innerHTML = '<p style="font-size:12px;color:var(--text-secondary);">Add a blog first, then test.</p>'; return; }
+  el.innerHTML = '<p style="font-size:12px;">⏳ Testing feeds... check console for details</p>';
+  let html = '';
+  for (const blog of blogs) {
+    const base = blog.url.replace(/\/+$/, '');
+    let host = ''; try { host = new URL(base).hostname; } catch(e) {}
+    const withWww = host.startsWith('www.') ? base : base.replace('://' + host, '://www.' + host);
+    html += `<div style="margin-top:8px;"><strong style="font-size:12px;">${esc(blog.name)}</strong>`;
+    // Test a few feed URLs with rss2json
+    const testUrls = [withWww + '/feed/', withWww + '/feed', base + '/feed/'];
+    const seen = new Set();
+    for (const feedUrl of testUrls) {
+      if (seen.has(feedUrl)) continue; seen.add(feedUrl);
+      const shortUrl = feedUrl.replace('https://', '');
+      // Test rss2json
+      try {
+        const r = await fetchWithTimeout(`https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(feedUrl)}&count=3`, {}, 10000);
+        const j = await r.json();
+        if (j.status === 'ok' && j.items && j.items.length) {
+          html += `<div style="font-size:11px;color:green;">✅ rss2json + ${esc(shortUrl)}: ${j.items.length} items — "${esc(j.items[0].title)}"</div>`;
+          break;
+        } else {
+          html += `<div style="font-size:11px;color:orange;">⚠️ rss2json + ${esc(shortUrl)}: ${j.message || 'no items'}</div>`;
+        }
+      } catch(e) {
+        html += `<div style="font-size:11px;color:red;">❌ rss2json + ${esc(shortUrl)}: ${e.message}</div>`;
+      }
+      // Test XML via corsproxy
+      try {
+        const r2 = await fetchWithTimeout(`https://corsproxy.io/?${encodeURIComponent(feedUrl)}`, {}, 10000);
+        const txt = await r2.text();
+        const items = parseRssXml(txt);
+        if (items && items.length) {
+          html += `<div style="font-size:11px;color:green;">✅ corsproxy XML + ${esc(shortUrl)}: ${items.length} items — "${esc(items[0].title)}"</div>`;
+          break;
+        } else {
+          html += `<div style="font-size:11px;color:orange;">⚠️ corsproxy XML + ${esc(shortUrl)}: got ${txt.length} bytes but no parseable items</div>`;
+        }
+      } catch(e) {
+        html += `<div style="font-size:11px;color:red;">❌ corsproxy XML + ${esc(shortUrl)}: ${e.message}</div>`;
+      }
+    }
+    html += '</div>';
+  }
+  el.innerHTML = html;
+}
+
+function renderBlogFeed(items) {
+  const el = document.getElementById('recipeDiscover');
+  if (!el) return;
+  // Keep existing discover content, add blog section at top
+  let blogHtml = '';
+  if (!(data.blogs||[]).length) {
+    // No blogs configured — show hint
+    blogHtml += `<div class="card" style="margin-bottom:16px;"><h3 style="margin-bottom:4px;">📰 Recipe Blogs</h3><p style="font-size:13px;color:var(--text-secondary);">Add your favorite food blogs in Settings to discover new recipes here!</p></div>`;
+  } else if (!items || !items.length) {
+    blogHtml += `<div class="card" style="margin-bottom:16px;"><h3 style="margin-bottom:4px;">📰 From Your Blogs</h3><p style="font-size:13px;color:var(--text-secondary);">${blogFeedLoading ? '⏳ Loading feeds...' : 'No posts found.'}</p>${!blogFeedLoading && blogFeedLastError ? '<p style="font-size:11px;color:var(--red);margin-top:4px;">'+esc(blogFeedLastError)+'</p>' : ''}${!blogFeedLoading ? '<p style="font-size:11px;color:var(--text-secondary);margin-top:4px;">Tip: Check browser console for detailed logs. Try popular blogs like pinchofyum.com or budgetbytes.com.</p>' : ''}</div>`;
+  } else {
+    blogHtml += `<div class="card" style="margin-bottom:16px;">`;
+    blogHtml += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;"><h3>📰 From Your Blogs</h3><button class="btn btn-sm btn-secondary" onclick="fetchBlogFeeds()" style="font-size:11px;">Refresh</button></div>`;
+    items.forEach(item => {
+      const timeAgo = getTimeAgo(new Date(item.pubDate));
+      blogHtml += `<a href="${safeUrl(item.link)}" target="_blank" rel="noopener" style="text-decoration:none;color:inherit;display:block;padding:10px 0;border-top:1px solid var(--border);">`;
+      blogHtml += `<div style="display:flex;gap:10px;align-items:flex-start;">`;
+      if (safeUrl(item.thumbnail)) {
+        blogHtml += `<img src="${safeUrl(item.thumbnail)}" style="width:60px;height:60px;object-fit:cover;border-radius:6px;flex-shrink:0;" onerror="this.style.display='none'">`;
+      }
+      blogHtml += `<div style="flex:1;min-width:0;">`;
+      blogHtml += `<div style="font-size:14px;font-weight:600;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(item.title)}</div>`;
+      blogHtml += `<div style="font-size:12px;color:var(--text-secondary);margin-bottom:2px;">${esc(item.blogName)} · ${timeAgo}</div>`;
+      if (item.description) blogHtml += `<div style="font-size:12px;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(item.description)}</div>`;
+      blogHtml += `</div></div></a>`;
+    });
+    blogHtml += `</div>`;
+  }
+  // Insert blog feed before existing discover content
+  const existingDiscover = el.querySelector('.discover-standard');
+  const discoverContent = existingDiscover ? existingDiscover.outerHTML : '';
+  const blogContainer = el.querySelector('.blog-feed-container');
+  if (blogContainer) {
+    blogContainer.innerHTML = blogHtml;
+  } else {
+    // Wrap existing content and prepend blog feed
+    el.innerHTML = `<div class="blog-feed-container">${blogHtml}</div><div class="discover-standard">${el.innerHTML}</div>`;
+  }
+}
+
+function getTimeAgo(date) {
+  const now = new Date();
+  const diff = now - date;
+  const days = Math.floor(diff / (1000*60*60*24));
+  if (days === 0) return 'Today';
+  if (days === 1) return 'Yesterday';
+  if (days < 7) return days + ' days ago';
+  if (days < 30) return Math.floor(days/7) + 'w ago';
+  return Math.floor(days/30) + 'mo ago';
+}
+
+// URL IMPORT
+// ===========================================================================
+function openUrlImport() { document.getElementById('urlImportModal').classList.add('open'); document.getElementById('importUrl').value=''; setImportStatus('',''); }
+function closeUrlImport() { document.getElementById('urlImportModal').classList.remove('open'); }
+function setImportStatus(msg,type) { const el=document.getElementById('importStatus'); el.textContent=msg; el.className='import-status'+(type?' '+type:''); }
+
+async function fetchViaProxy(url) {
+  const proxies = [
+    u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+    u => `https://corsproxy.io/?${encodeURIComponent(u)}`,
+    u => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`,
+    u => `https://everyorigin.jwvbremen.nl/api/get?url=${encodeURIComponent(u)}`,
+    u => `https://proxy.cors.sh/${u}`,
+  ];
+  let lastErr = null;
+  for (const mkUrl of proxies) {
+    try {
+      const resp = await fetch(mkUrl(url), {signal: AbortSignal.timeout(12000), headers: {'x-requested-with': 'XMLHttpRequest'}});
+      if (!resp.ok) { lastErr = new Error('HTTP '+resp.status); continue; }
+      const text = await resp.text();
+      // everyorigin wraps in JSON
+      if (mkUrl.toString().includes('everyorigin')) {
+        try { const j = JSON.parse(text); return j.html || j.contents || text; } catch(e) { return text; }
+      }
+      if (text && text.length > 200) return text;
+      lastErr = new Error('Empty response');
+    } catch(e) { lastErr = e; }
+  }
+  throw lastErr || new Error('All proxies failed');
+}
+
+async function importFromUrl() {
+  const url = document.getElementById('importUrl').value.trim();
+  if(!url){toast('Enter a URL');return;}
+  setImportStatus('Fetching recipe...','loading');
+  document.getElementById('importBtn').disabled=true;
+  try {
+    const html = await fetchViaProxy(url);
+    let recipe=null;
+    const ldMatches = html.match(/<script[^>]*type\s*=\s*["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi);
+    if(ldMatches) for(const match of ldMatches) {
+      try {
+        let parsed=JSON.parse(match.replace(/<script[^>]*>/i,'').replace(/<\/script>/i,'').trim());
+        if(parsed['@graph'])parsed=parsed['@graph'];
+        if(Array.isArray(parsed))parsed=parsed.find(i=>i['@type']==='Recipe'||(Array.isArray(i['@type'])&&i['@type'].includes('Recipe')));
+        if(parsed&&(parsed['@type']==='Recipe'||(Array.isArray(parsed['@type'])&&parsed['@type'].includes('Recipe')))){recipe=parsed;break;}
+      }catch(e){}
+    }
+    if(!recipe){setImportStatus('No structured recipe data found. Try adding manually.','error');document.getElementById('importBtn').disabled=false;return;}
+    const name=recipe.name||'Imported Recipe';
+    const ingredients=[];
+    (recipe.recipeIngredient||[]).forEach(ing=>{
+      if(typeof ing!=='string')return; const cleaned=ing.replace(/<[^>]*>/g,'').trim(); if(!cleaned)return;
+      const m=cleaned.match(/^([\d\u00BC-\u00BE\u2150-\u215E\/\.\s-]+)\s*(cups?|tbsp|tsp|tablespoons?|teaspoons?|oz|ounces?|lbs?|pounds?|cans?|cloves?|bunch|head|pint|quart|gallon|pieces?|slices?|stalks?|sprigs?|large|medium|small|whole)?\s*(.+)/i);
+      if(m){ingredients.push({name:m[3].trim(),quantity:(m[1].trim()+(m[2]?' '+m[2]:'')).trim(),category:guessCategory(m[3].trim())});}
+      else ingredients.push({name:cleaned,quantity:'',category:guessCategory(cleaned)});
+    });
+    let notes='';
+    if(recipe.recipeInstructions){const instr=recipe.recipeInstructions;if(typeof instr==='string')notes=instr.replace(/<[^>]*>/g,'');else if(Array.isArray(instr))notes=instr.map(s=>{if(typeof s==='string')return s.replace(/<[^>]*>/g,'');if(s.text)return s.text.replace(/<[^>]*>/g,'');if(s.itemListElement)return s.itemListElement.map(x=>x.text||'').join('\n');return '';}).filter(Boolean).join('\n\n');}
+    closeUrlImport();
+    document.getElementById('recipeModal').classList.add('open');
+    document.getElementById('recipeModalTitle').textContent='Add Recipe';
+    document.getElementById('recipeEditId').value='';
+    document.getElementById('recipeName').value=name;
+    document.getElementById('recipeUrl').value=url;
+    document.getElementById('recipeNotes').value=notes;
+    document.getElementById('deleteRecipeBtn').style.display='none';
+    document.getElementById('recipeCuisine').innerHTML='<option value="">Select a cuisine...</option>'+getCuisines().map(c=>`<option>${c}</option>`).join('');
+    document.getElementById('ingredientRows').innerHTML='';
+    ingredients.forEach(i=>addIngredientRow(i.name,i.quantity,i.category));
+    if(!ingredients.length)addIngredientRow();
+    toast(`Imported "${name}" with ${ingredients.length} ingredients!`);
+  }catch(err){setImportStatus('Error: '+err.message,'error');}
+  document.getElementById('importBtn').disabled=false;
+}
+
+function guessCategory(name) {
+  const n=name.toLowerCase();
+  if(['lettuce','tomato','onion','garlic','pepper','broccoli','carrot','celery','potato','mushroom','spinach','kale','avocado','lemon','lime','ginger','cilantro','parsley','basil','mint','thyme','rosemary','oregano','jalape','scallion','shallot','zucchini','squash','cucumber','corn','asparagus','bean','pea','cabbage','beet','radish','eggplant','arugula','berry','apple','banana','mango','orange','fruit','herb','salad','greens','chive','dill','sage'].some(p=>n.includes(p)))return'Produce';
+  if(['chicken','beef','pork','salmon','shrimp','turkey','lamb','sausage','bacon','fish','steak','ground','fillet','thigh','breast','drumstick','wing','rib','ham','tuna','crab','lobster','scallop','prawn','chorizo','prosciutto'].some(p=>n.includes(p)))return'Meat & Seafood';
+  if(['milk','cheese','butter','cream','yogurt','egg','sour cream','mozzarella','cheddar','parmesan','ricotta','feta','gouda','brie','whipping','half-and-half','ghee'].some(p=>n.includes(p)))return'Dairy';
+  if(['bread','roll','bun','tortilla','pita','crouton','baguette','croissant','naan','wrap'].some(p=>n.includes(p)))return'Bakery';
+  if(['frozen','ice cream'].some(p=>n.includes(p)))return'Frozen';
+  if(['juice','wine','beer','soda','coffee','tea','broth','stock','coconut milk'].some(p=>n.includes(p)))return'Beverages';
+  return'Pantry';
+}
+
+// ===========================================================================
+// RECIPE DISCOVERY & SUGGESTIONS
+// ===========================================================================
+const SUGGESTED_RECIPES = [
+  {name:'Honey Garlic Chicken Thighs',cuisine:'American',desc:'5-ingredient crispy thighs with a sweet garlic glaze. 30 min.',ingredients:['chicken thighs','honey','soy sauce','garlic','olive oil']},
+  {name:'One-Pan Lemon Herb Chicken & Potatoes',cuisine:'Mediterranean',desc:'Sheet pan dinner, minimal cleanup. Bright lemon flavor.',ingredients:['chicken breasts','baby potatoes','lemon','thyme','olive oil','garlic']},
+  {name:'15-Minute Shrimp Scampi',cuisine:'Italian',desc:'Buttery garlicky shrimp over pasta. Weeknight fast.',ingredients:['shrimp','linguine','butter','garlic','white wine','lemon','parsley']},
+  {name:'Black Bean Tacos',cuisine:'Mexican',desc:'Meatless Monday hero. Ready in 15 min.',ingredients:['black beans','tortillas','avocado','salsa','lime','cilantro','cheese']},
+  {name:'Chicken Teriyaki Rice Bowls',cuisine:'Asian',desc:'Sweet-savory chicken over rice with quick pickled cucumbers.',ingredients:['chicken thighs','rice','soy sauce','brown sugar','ginger','garlic','cucumber']},
+  {name:'Creamy Tuscan Chicken',cuisine:'Italian',desc:'Sun-dried tomatoes and spinach in a creamy garlic sauce.',ingredients:['chicken breasts','sun-dried tomatoes','spinach','heavy cream','garlic','parmesan']},
+  {name:'Easy Beef & Broccoli',cuisine:'Asian',desc:'Better than takeout, ready in 25 min.',ingredients:['flank steak','broccoli','soy sauce','brown sugar','garlic','ginger','cornstarch']},
+  {name:'Greek Chicken Bowls',cuisine:'Mediterranean',desc:'Fresh, healthy bowls with tzatziki. Great for meal prep.',ingredients:['chicken breasts','cucumber','tomatoes','red onion','feta','rice','greek yogurt']},
+  {name:'Sausage & Peppers Sheet Pan',cuisine:'Italian',desc:'Slice everything, roast, done. Perfect with crusty bread.',ingredients:['Italian sausages','bell peppers','onion','olive oil','Italian seasoning']},
+  {name:'Chicken Fajitas',cuisine:'Mexican',desc:'Sizzling peppers and onions with seasoned chicken.',ingredients:['chicken breasts','bell peppers','onion','tortillas','lime','cumin','chili powder']},
+  {name:'Garlic Butter Salmon',cuisine:'American',desc:'Pan-seared in 12 min. Fancy-feeling weeknight dinner.',ingredients:['salmon fillets','butter','garlic','lemon','dill']},
+  {name:'Thai Peanut Noodles',cuisine:'Asian',desc:'Creamy peanut sauce tossed with noodles and crunchy veggies.',ingredients:['rice noodles','peanut butter','soy sauce','lime','sriracha','carrots','edamame']},
+  {name:'Caprese Chicken',cuisine:'Italian',desc:'Topped with mozzarella, tomatoes, and balsamic glaze.',ingredients:['chicken breasts','mozzarella','tomatoes','basil','balsamic glaze','olive oil']},
+  {name:'BBQ Chicken Quesadillas',cuisine:'Mexican',desc:'Crispy, cheesy, and ready in 10 min. Kids love these.',ingredients:['tortillas','rotisserie chicken','bbq sauce','shredded cheese','red onion','cilantro']},
+  {name:'Lemon Garlic Butter Shrimp & Asparagus',cuisine:'Mediterranean',desc:'Light and elegant, 20 min from start to plate.',ingredients:['shrimp','asparagus','butter','garlic','lemon','red pepper flakes']},
+  {name:'Crispy Baked Chicken Tenders',cuisine:'American',desc:'Oven-baked, crunchy outside. Way better than frozen.',ingredients:['chicken tenders','panko breadcrumbs','parmesan','eggs','garlic powder']},
+  {name:'Beef Burrito Bowls',cuisine:'Mexican',desc:'Chipotle-style at home. Customize your toppings.',ingredients:['ground beef','rice','black beans','corn','salsa','sour cream','cheese','lettuce']},
+  {name:'Coconut Curry Chicken',cuisine:'Indian',desc:'Creamy mild curry, great over rice. Family-friendly spice level.',ingredients:['chicken thighs','coconut milk','curry paste','onion','garlic','rice','cilantro']},
+  {name:'Baked Pesto Pasta',cuisine:'Italian',desc:'Toss, bake, eat. Cheesy pesto goodness.',ingredients:['penne','pesto','mozzarella','cherry tomatoes','parmesan','cream']},
+  {name:'Korean Beef Bowls',cuisine:'Asian',desc:'Sweet and savory ground beef, ready in 20 min.',ingredients:['ground beef','soy sauce','brown sugar','sesame oil','garlic','ginger','rice','green onion']},
+  {name:'Chicken Tortilla Soup',cuisine:'Mexican',desc:'Cozy, spicy soup that comes together in one pot.',ingredients:['chicken breasts','fire-roasted tomatoes','black beans','corn','chicken broth','cumin','tortilla chips']},
+  {name:'Shakshuka',cuisine:'Mediterranean',desc:'Eggs poached in spiced tomato sauce. Great with crusty bread.',ingredients:['eggs','crushed tomatoes','onion','bell pepper','garlic','cumin','paprika']},
+  {name:'Butter Chicken',cuisine:'Indian',desc:'Mild, creamy, and absolutely delicious. Simpler than you think.',ingredients:['chicken thighs','tomato sauce','butter','cream','garam masala','garlic','ginger','rice']},
+  {name:'Stuffed Bell Peppers',cuisine:'American',desc:'Ground beef, rice, and cheese stuffed in colorful peppers.',ingredients:['bell peppers','ground beef','rice','tomato sauce','cheese','onion','garlic']},
+  {name:'Garlic Parmesan Pasta',cuisine:'Italian',desc:'Pantry staple dinner. Rich, simple, 15 min.',ingredients:['spaghetti','butter','garlic','parmesan','cream','black pepper','parsley']},
+  {name:'Chicken Caesar Wraps',cuisine:'Salads & Light',desc:'Lunch or light dinner. Crunchy, creamy, portable.',ingredients:['tortillas','chicken breast','romaine','parmesan','caesar dressing','croutons']},
+  {name:'Pulled Pork Sandwiches (Slow Cooker)',cuisine:'Southern',desc:'Set it and forget it. Tender, tangy pulled pork.',ingredients:['pork shoulder','bbq sauce','apple cider vinegar','brown sugar','buns','coleslaw mix']},
+  {name:'Veggie Fried Rice',cuisine:'Asian',desc:'Use leftover rice and whatever veggies you have.',ingredients:['cooked rice','eggs','soy sauce','sesame oil','frozen peas','carrots','green onion']},
+  {name:'Meatball Subs',cuisine:'Comfort Food',desc:'Cheesy, saucy, and satisfying. Use frozen meatballs for speed.',ingredients:['meatballs','marinara sauce','mozzarella','hoagie rolls','parmesan']},
+  {name:'Fish Tacos',cuisine:'Mexican',desc:'Crispy fish with slaw and creamy sauce. Light and fresh.',ingredients:['white fish','tortillas','cabbage','lime','sour cream','cilantro','chili powder']},
+  {name:'Chicken Parmesan',cuisine:'Italian',desc:'Classic comfort. Crispy cutlets under marinara and melted cheese.',ingredients:['chicken breasts','breadcrumbs','marinara sauce','mozzarella','parmesan','spaghetti']},
+  {name:'Chili (One-Pot)',cuisine:'Comfort Food',desc:'Hearty, warming, even better the next day.',ingredients:['ground beef','kidney beans','diced tomatoes','onion','garlic','chili powder','cumin']},
+  {name:'Grilled Cheese & Tomato Soup',cuisine:'Comfort Food',desc:'The ultimate cozy combo. Kids and adults agree.',ingredients:['bread','cheddar cheese','butter','canned tomato soup','cream']},
+  {name:'Chicken Alfredo',cuisine:'Italian',desc:'Rich, creamy pasta. A guaranteed crowd-pleaser.',ingredients:['fettuccine','chicken breasts','heavy cream','parmesan','butter','garlic']},
+  {name:'Taco Salad',cuisine:'Mexican',desc:'All the taco flavors in a big crunchy salad.',ingredients:['ground beef','lettuce','tomatoes','cheese','tortilla chips','salsa','sour cream']},
+  {name:'Baked Ziti',cuisine:'Italian',desc:'Cheesy pasta bake. Great for feeding a crowd.',ingredients:['ziti','ricotta','mozzarella','marinara sauce','Italian sausage','parmesan']},
+  {name:'Chicken Pot Pie (Easy)',cuisine:'Comfort Food',desc:'Store-bought crust makes this doable on a weeknight.',ingredients:['rotisserie chicken','frozen vegetables','cream of chicken soup','pie crust','butter']},
+  {name:'Dal Tadka',cuisine:'Indian',desc:'Comforting spiced lentils. Protein-packed and budget-friendly.',ingredients:['red lentils','onion','tomato','garlic','cumin','turmeric','ghee','rice']},
+  {name:'BLT Pasta Salad',cuisine:'Salads & Light',desc:'Summer dinner perfection. Bacon makes everything better.',ingredients:['rotini','bacon','cherry tomatoes','romaine','ranch dressing','avocado']},
+  {name:'Smash Burgers',cuisine:'American',desc:'Crispy edges, juicy center. The best homemade burger.',ingredients:['ground beef','burger buns','American cheese','lettuce','tomato','onion','pickles']},
+];
+
+let suggestionSeed = Math.floor(Math.random()*10000);
+
+function getRecipeStats() {
+  const history = data.usageHistory || [];
+  const counts = {}, lastUsed = {};
+  history.forEach(h => {
+    counts[h.recipeId] = (counts[h.recipeId]||0) + 1;
+    if (!lastUsed[h.recipeId] || h.date > lastUsed[h.recipeId]) lastUsed[h.recipeId] = h.date;
+  });
+  return { counts, lastUsed };
+}
+
+function getStandards() {
+  const { counts } = getRecipeStats();
+  return data.recipes
+    .filter(r => (counts[r.id]||0) >= 3)
+    .sort((a,b) => (counts[b.id]||0) - (counts[a.id]||0));
+}
+
+function getNotMadeRecently(weeksThreshold) {
+  const { lastUsed, counts } = getRecipeStats();
+  const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - (weeksThreshold||4)*7);
+  const cutoffStr = dateKey(cutoff);
+  return data.recipes.filter(r => {
+    const last = lastUsed[r.id];
+    return (counts[r.id]||0) > 0 && (!last || last < cutoffStr);
+  }).sort((a,b) => (lastUsed[a.id]||'').localeCompare(lastUsed[b.id]||''));
+}
+
+function getNewSuggestions() {
+  const existingNames = new Set(data.recipes.map(r => r.name.toLowerCase()));
+  const available = SUGGESTED_RECIPES.filter(s => !existingNames.has(s.name.toLowerCase()));
+  // Shuffle deterministically based on seed
+  const shuffled = [...available].sort((a,b) => (hashStr(a.name+suggestionSeed)%10000) - (hashStr(b.name+suggestionSeed)%10000));
+  return shuffled.slice(0, 6);
+}
+
+function shuffleSuggestions() { suggestionSeed = Math.floor(Math.random()*10000); renderRecipes(); }
+
+function quickAddSuggestion(idx) {
+  const suggestions = getNewSuggestions();
+  const s = suggestions[idx]; if (!s) return;
+  const ingredients = s.ingredients.map(name => ({name, quantity:'', category:guessCategory(name)}));
+  data.recipes.push({id:uid(), name:s.name, cuisine:s.cuisine, url:'', ingredients, notes:s.desc});
+  persist(); renderRecipes();
+  toast('Added "'+s.name+'" — edit to customize!');
+}
+
+// ===========================================================================
+// MEAL PLAN
+// ===========================================================================
+function changeWeek(dir) { currentWeekStart=new Date(currentWeekStart); currentWeekStart.setDate(currentWeekStart.getDate()+dir*7); cuisineFilters={}; renderMealPlan(); }
+
+function getDayMode(dk) {
+  // Check if this day has a doordash order
+  const dd = data.doordash || { orders: [] };
+  const order = dd.orders.find(o => o.date === dk);
+  if (order && order.mode === 'eatingout') return 'eatingout';
+  if (order) return 'doordash';
+  return 'cooking';
+}
+
+// Swap a Claude pick for its suggested alternate
+function swapMealAlt(dk) {
+  const meals = data.mealPlan[dk];
+  if (!meals || !meals.length || !meals[0].altId) return;
+  const m = meals[0];
+  const oldId = m.recipeId;
+  m.recipeId = m.altId;
+  m.altId = oldId;
+  const r = data.recipes.find(x => x.id === m.recipeId);
+  m.reason = 'Your swap' + (r && r.cuisine ? ' — ' + r.cuisine : '');
+  persist();
+  renderMealPlan();
+  if (r) toast('Swapped to ' + r.name);
+}
+
+function renderMealPlan() {
+  const end=new Date(currentWeekStart); end.setDate(end.getDate()+6);
+  document.getElementById('weekLabel').textContent=fmtDate(currentWeekStart)+' – '+fmtDate(end);
+  const days=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  // Build unified cuisine list from recipes + DD restaurants
+  const recipeCuisines = data.recipes.map(r=>r.cuisine).filter(Boolean);
+  const ddRestCuisines = (ensureDD().restaurants||[]).map(r=>r.cuisine).filter(Boolean);
+  const allCuisines = [...new Set([...recipeCuisines,...ddRestCuisines])].sort();
+  const standardIds = new Set(getStandards().map(r=>r.id));
+  if (standardIds.size) allCuisines.unshift('★ Standards');
+  let html='';
+  for(let i=0;i<7;i++){
+    const d=new Date(currentWeekStart);d.setDate(d.getDate()+i);const dk=dateKey(d);
+    const mode = getDayMode(dk);
+    const meals=data.mealPlan[dk]||[];
+    const currentId=meals.length?meals[0].recipeId:'';
+    const currentRecipe=currentId?data.recipes.find(r=>r.id===currentId):null;
+    const order = ensureDD().orders.find(o=>o.date===dk);
+
+    // Infer cuisine from current selection
+    let selectedCuisine = cuisineFilters[dk] !== undefined ? cuisineFilters[dk] : '';
+    if (!selectedCuisine && mode==='cooking' && currentRecipe) selectedCuisine = standardIds.has(currentRecipe.id) ? '★ Standards' : (currentRecipe.cuisine||'');
+    if (!selectedCuisine && mode==='doordash' && order && order.restaurant) {
+      const rest = ensureDD().restaurants.find(r=>r.name===order.restaurant);
+      if (rest) selectedCuisine = rest.cuisine || '';
+    }
+
+    html+=`<div class="day-card"><div class="day-header"><span>${days[i]}</span><span class="date">${fmtDate(d)}</span></div><div class="day-meal">`;
+    // Toggle
+    html+=`<div class="meal-toggle"><button class="${mode==='cooking'?'active-cook':''}" onclick="setDayMode('${dk}','cooking')">🍳 Cooking</button><button class="${mode==='doordash'?'active-dd':''}" onclick="setDayMode('${dk}','doordash')">🛵 DoorDash</button><button class="${mode==='eatingout'?'active-eo':''}" onclick="setDayMode('${dk}','eatingout')">🍽️ Eating Out</button></div>`;
+    // Cuisine filter (for cooking and doordash modes)
+    if (mode !== 'eatingout') {
+      html+=`<select class="cuisine-select" onchange="filterCuisine('${dk}',this.value)"><option value="">Any cuisine</option>${allCuisines.map(c=>`<option ${c===selectedCuisine?'selected':''}>${esc(c)}</option>`).join('')}</select>`;
+    }
+
+    if (mode === 'cooking') {
+      let filteredRecipes;
+      if (selectedCuisine === '★ Standards') filteredRecipes = data.recipes.filter(r=>standardIds.has(r.id));
+      else if (selectedCuisine) filteredRecipes = data.recipes.filter(r=>r.cuisine===selectedCuisine);
+      else filteredRecipes = data.recipes;
+      html+=`<select onchange="setMeal('${dk}',this.value)"><option value="">— pick a recipe —</option>${filteredRecipes.map(r=>`<option value="${r.id}" ${currentId===r.id?'selected':''}>${esc(r.name)}</option>`).join('')}</select>`;
+      // Claude's reasoning for this pick + one-tap swap to the alternate
+      if (meals.length && meals[0].reason) {
+        const alt = meals[0].altId ? data.recipes.find(r=>r.id===meals[0].altId) : null;
+        html+=`<div style="font-size:12px;color:var(--purple);margin-top:6px;line-height:1.4;">✨ ${esc(meals[0].reason)}${alt ? ` &nbsp;<button onclick="swapMealAlt('${dk}')" style="background:none;border:1px solid var(--border);border-radius:10px;padding:2px 8px;font-size:11px;color:var(--text-secondary);cursor:pointer;">↺ ${esc(alt.name)}</button>` : ''}</div>`;
+      }
+    } else if (mode === 'doordash') {
+      // DoorDash mode — restaurant dropdown + cost/items
+      const ddRests = ensureDD().restaurants;
+      const filteredRests = selectedCuisine && selectedCuisine !== '★ Standards' ? ddRests.filter(r=>r.cuisine===selectedCuisine) : ddRests;
+      const currentRest = order ? order.restaurant : '';
+
+      if (order && currentRest && !order._editing) {
+        html+=`<div class="dd-logged"><span class="dd-restaurant">${esc(currentRest)}</span>${order.items?' · '+esc(order.items):''}${order.cost?' · <span class="dd-cost">$'+Number(order.cost).toFixed(2)+'</span>':''}</div>`;
+        html+=`<div style="display:flex;gap:6px;"><button class="btn btn-sm btn-primary" style="font-size:12px;background:#ff3008;" onclick="openDoorDash('${esc(currentRest).replace(/'/g,"\\'")}')">🛵 Open DoorDash</button><button class="btn btn-sm btn-secondary" onclick="editDoorDash('${dk}')" style="font-size:12px;">Edit</button></div>`;
+      } else {
+        // Restaurant picker
+        html+=`<select onchange="setDDRestaurant('${dk}',this.value)"><option value="">— pick a restaurant —</option>${filteredRests.map(r=>`<option ${currentRest===r.name?'selected':''}>${esc(r.name)}</option>`).join('')}<option value="__custom__"${!currentRest||filteredRests.some(r=>r.name===currentRest)?'':' selected'}>Other...</option></select>`;
+        // If custom or editing, show text input
+        const isCustom = currentRest && !ddRests.some(r=>r.name===currentRest);
+        if (isCustom || (order && order._editing)) {
+          html+=`<input type="text" id="dd-rest-${dk}" placeholder="Restaurant name" value="${esc(currentRest)}" onchange="saveDoorDash('${dk}')" style="padding:7px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;">`;
+        }
+        html+=`<div class="dd-row"><input type="number" id="dd-cost-${dk}" placeholder="$ Total" step="0.01" value="${order&&order.cost?order.cost:''}" onchange="saveDoorDash('${dk}')"><input type="text" id="dd-what-${dk}" placeholder="What you got" value="${order?esc(order.items||''):''}" onchange="saveDoorDash('${dk}')"></div>`;
+      }
+    } else {
+      // Eating Out mode — restaurant name + optional notes
+      const currentRest = order ? order.restaurant : '';
+      if (order && currentRest && !order._editing) {
+        html+=`<div class="dd-logged"><span class="dd-restaurant">${esc(currentRest)}</span>${order.items?' · '+esc(order.items):''}</div>`;
+        html+=`<button class="btn btn-sm btn-secondary" onclick="editDoorDash('${dk}')" style="font-size:12px;">Edit</button>`;
+      } else {
+        html+=`<input type="text" id="eo-rest-${dk}" placeholder="Where are you eating?" value="${esc(currentRest)}" onchange="saveEatingOut('${dk}')" style="padding:7px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;width:100%;">`;
+        html+=`<input type="text" id="eo-what-${dk}" placeholder="Notes (optional)" value="${order?esc(order.items||''):''}" onchange="saveEatingOut('${dk}')" style="padding:7px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;width:100%;margin-top:6px;">`;
+      }
+    }
+    html+=`</div></div>`;
+  }
+  document.getElementById('mealPlanDays').innerHTML=html;
+}
+
+function setDayMode(dk, mode) {
+  if (mode === 'doordash') {
+    delete data.mealPlan[dk];
+    if(!data.doordash) data.doordash={orders:[],monthlyBudget:150,monthlyTarget:4};
+    // Remove existing order for this day then add fresh
+    if(data.doordash.orders) data.doordash.orders = data.doordash.orders.filter(o=>o.date!==dk);
+    else data.doordash.orders = [];
+    data.doordash.orders.push({date:dk, restaurant:'', cost:null, items:''});
+  } else if (mode === 'eatingout') {
+    delete data.mealPlan[dk];
+    if(!data.doordash) data.doordash={orders:[],monthlyBudget:150,monthlyTarget:4};
+    if(data.doordash.orders) data.doordash.orders = data.doordash.orders.filter(o=>o.date!==dk);
+    else data.doordash.orders = [];
+    data.doordash.orders.push({date:dk, restaurant:'', cost:null, items:'', mode:'eatingout'});
+  } else {
+    // Switch back to cooking — remove DD/EO order for this day
+    if(data.doordash && data.doordash.orders) {
+      data.doordash.orders = data.doordash.orders.filter(o=>o.date!==dk);
+    }
+  }
+  persist(); renderMealPlan();
+}
+
+function setDDRestaurant(dk, value) {
+  const dd = ensureDD();
+  let order = dd.orders.find(o=>o.date===dk);
+  if(!order) { order={date:dk,restaurant:'',cost:null,items:''}; dd.orders.push(order); }
+  if (value === '__custom__') {
+    order.restaurant = '';
+    order._editing = true;
+    persist(); renderMealPlan();
+    return;
+  }
+  order.restaurant = value;
+  delete order._editing;
+  // Auto-set cuisine filter based on restaurant
+  const rest = dd.restaurants.find(r=>r.name===value);
+  if (rest && rest.cuisine) cuisineFilters[dk] = rest.cuisine;
+  persist(); renderMealPlan();
+}
+
+function saveDoorDash(dk) {
+  const dd = ensureDD();
+  let order = dd.orders.find(o=>o.date===dk);
+  if(!order) { order={date:dk,restaurant:'',cost:null,items:''}; dd.orders.push(order); }
+  const restEl = document.getElementById('dd-rest-'+dk);
+  const costEl = document.getElementById('dd-cost-'+dk);
+  const whatEl = document.getElementById('dd-what-'+dk);
+  if(restEl) order.restaurant = restEl.value;
+  if(costEl) order.cost = costEl.value ? parseFloat(costEl.value) : null;
+  if(whatEl) order.items = whatEl.value;
+  delete order._editing;
+  persist();
+}
+
+function saveEatingOut(dk) {
+  const dd = ensureDD();
+  let order = dd.orders.find(o=>o.date===dk);
+  if(!order) { order={date:dk,restaurant:'',cost:null,items:'',mode:'eatingout'}; dd.orders.push(order); }
+  const restEl = document.getElementById('eo-rest-'+dk);
+  const whatEl = document.getElementById('eo-what-'+dk);
+  if(restEl) order.restaurant = restEl.value;
+  if(whatEl) order.items = whatEl.value;
+  order.mode = 'eatingout';
+  delete order._editing;
+  persist();
+}
+
+function editDoorDash(dk) {
+  // Re-render to show the form instead of the summary
+  if(!data.doordash) return;
+  const order = data.doordash.orders.find(o=>o.date===dk);
+  if(order) order._editing = true;
+  renderMealPlan();
+}
+
+function filterCuisine(dk, cuisine) {
+  cuisineFilters[dk] = cuisine;
+  const mode = getDayMode(dk);
+  if (mode === 'cooking') {
+    const meals = data.mealPlan[dk]||[];
+    const currentId = meals.length?meals[0].recipeId:'';
+    const currentRecipe = currentId?data.recipes.find(r=>r.id===currentId):null;
+    if(currentRecipe && cuisine) {
+      const standardIds = new Set(getStandards().map(r=>r.id));
+      const matches = cuisine === '★ Standards' ? standardIds.has(currentRecipe.id) : currentRecipe.cuisine === cuisine;
+      if (!matches) { delete data.mealPlan[dk]; persist(); }
+    }
+  } else if (mode === 'doordash') {
+    // DoorDash mode — clear restaurant if it doesn't match cuisine
+    const order = ensureDD().orders.find(o=>o.date===dk);
+    if (order && order.restaurant && cuisine) {
+      const rest = ensureDD().restaurants.find(r=>r.name===order.restaurant);
+      if (rest && rest.cuisine !== cuisine) { order.restaurant=''; order._editing=false; persist(); }
+    }
+  }
+  renderMealPlan();
+}
+
+function setMeal(dk,recipeId) {
+  if(recipeId) {
+    data.mealPlan[dk]=[{meal:'dinner',recipeId}];
+    if(!data.usageHistory) data.usageHistory=[];
+    data.usageHistory.push({recipeId, date:dk, added:Date.now()});
+  } else delete data.mealPlan[dk];
+  persist();
+}
+
+// ===========================================================================
+// AUTO MEAL PLAN GENERATOR
+// ===========================================================================
+function autoFillMealPlan() {
+  if (!data.recipes.length) { toast('Add some recipes first!'); return; }
+  const ddOrders = (data.doordash||{orders:[]}).orders;
+  const emptyDays = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(currentWeekStart); d.setDate(d.getDate()+i);
+    const dk = dateKey(d);
+    const hasRecipe = (data.mealPlan[dk]||[]).length > 0;
+    const hasOrder = ddOrders.find(o=>o.date===dk);
+    if (!hasRecipe && !hasOrder) emptyDays.push(dk);
+  }
+  if (!emptyDays.length) { toast('All days are already planned!'); return; }
+
+  // Get usage stats and cuisines used this week already
+  const stats = getRecipeStats();
+  const weekCuisines = [];
+  const weekRecipeIds = new Set();
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(currentWeekStart); d.setDate(d.getDate()+i);
+    const dk = dateKey(d);
+    const meals = data.mealPlan[dk]||[];
+    if (meals.length) {
+      const r = data.recipes.find(x=>x.id===meals[0].recipeId);
+      if (r) { weekCuisines.push(r.cuisine); weekRecipeIds.add(r.id); }
+    }
+  }
+
+  // Score recipes: prefer diversity (different cuisines), recently unused, and variety
+  const candidates = data.recipes.filter(r => !weekRecipeIds.has(r.id));
+  const allRecipes = candidates.length >= emptyDays.length ? candidates : [...data.recipes];
+
+  // Sort by: 1) cuisine not yet used this week, 2) least recently used, 3) random tiebreak
+  const now = Date.now();
+  const scored = allRecipes.map(r => {
+    let score = 0;
+    // Prefer cuisines not yet in the week
+    if (!weekCuisines.includes(r.cuisine)) score += 100;
+    // Prefer less-used recipes
+    const useCount = stats.counts[r.id] || 0;
+    score -= useCount * 10;
+    // Prefer not recently used
+    const lastUsed = stats.lastUsed[r.id] || 0;
+    const daysSinceUsed = lastUsed ? Math.floor((now - lastUsed) / (1000*60*60*24)) : 999;
+    score += Math.min(daysSinceUsed, 60);
+    // Random tiebreak
+    score += Math.random() * 20;
+    return { recipe: r, score };
+  });
+
+  scored.sort((a,b) => b.score - a.score);
+
+  // Pick one per empty day, avoiding repeats and ensuring cuisine diversity
+  const picked = [];
+  const pickedIds = new Set(weekRecipeIds);
+  const pickedCuisines = [...weekCuisines];
+
+  for (const dk of emptyDays) {
+    // Re-score remaining based on what we've picked so far
+    let best = null, bestScore = -Infinity;
+    for (const s of scored) {
+      if (pickedIds.has(s.recipe.id)) continue;
+      let bonus = 0;
+      if (!pickedCuisines.includes(s.recipe.cuisine)) bonus += 50;
+      const total = s.score + bonus;
+      if (total > bestScore) { bestScore = total; best = s; }
+    }
+    if (!best) {
+      // All recipes used, just pick randomly
+      best = scored[Math.floor(Math.random() * scored.length)];
+    }
+    picked.push({ dk, recipe: best.recipe });
+    pickedIds.add(best.recipe.id);
+    pickedCuisines.push(best.recipe.cuisine);
+  }
+
+  // Apply picks
+  for (const p of picked) {
+    data.mealPlan[p.dk] = [{ meal: 'dinner', recipeId: p.recipe.id }];
+    if (!data.usageHistory) data.usageHistory = [];
+    data.usageHistory.push({ recipeId: p.recipe.id, date: p.dk, added: Date.now() });
+  }
+  persist(); renderMealPlan();
+  toast(`Filled ${picked.length} day${picked.length>1?'s':''} with diverse recipes!`);
+}
+
+// ===========================================================================
+// GROCERY
+// ===========================================================================
+
+// Grocery date range — defaults to today through next Sunday (always at least 1 full day)
+let groceryStart = new Date(); groceryStart.setHours(0,0,0,0);
+let groceryEnd = (function() { const d = new Date(); d.setHours(0,0,0,0); const day = d.getDay(); const daysToSun = day === 0 ? 7 : 7 - day; d.setDate(d.getDate() + daysToSun); return d; })();
+
+function initGroceryDates() {
+  const startEl = document.getElementById('groceryStartDate');
+  const endEl = document.getElementById('groceryEndDate');
+  if (startEl) startEl.value = dateKey(groceryStart);
+  if (endEl) endEl.value = dateKey(groceryEnd);
+  updateGroceryRangeInfo();
+}
+
+function onGroceryDateChange() {
+  const startEl = document.getElementById('groceryStartDate');
+  const endEl = document.getElementById('groceryEndDate');
+  if (startEl && startEl.value) {
+    const parts = startEl.value.split('-');
+    groceryStart = new Date(+parts[0], +parts[1]-1, +parts[2], 0, 0, 0, 0);
+  }
+  if (endEl && endEl.value) {
+    const parts = endEl.value.split('-');
+    groceryEnd = new Date(+parts[0], +parts[1]-1, +parts[2], 0, 0, 0, 0);
+  }
+  if (groceryEnd < groceryStart) { groceryEnd = new Date(groceryStart); groceryEnd.setDate(groceryEnd.getDate() + 6); endEl.value = dateKey(groceryEnd); }
+  updateGroceryRangeInfo();
+  renderGrocery();
+}
+
+function setGroceryRange(preset) {
+  const today = new Date(); today.setHours(0,0,0,0);
+  if (preset === 'today') {
+    groceryStart = new Date(today);
+    const day = today.getDay();
+    const daysToSun = day === 0 ? 7 : 7 - day;
+    groceryEnd = new Date(today); groceryEnd.setDate(groceryEnd.getDate() + daysToSun);
+  } else if (preset === 'thisweek') {
+    groceryStart = getMonday(today);
+    groceryEnd = new Date(groceryStart); groceryEnd.setDate(groceryEnd.getDate() + 6);
+  } else if (preset === 'nextweek') {
+    groceryStart = getMonday(today); groceryStart.setDate(groceryStart.getDate() + 7);
+    groceryEnd = new Date(groceryStart); groceryEnd.setDate(groceryEnd.getDate() + 6);
+  }
+  document.getElementById('groceryStartDate').value = dateKey(groceryStart);
+  document.getElementById('groceryEndDate').value = dateKey(groceryEnd);
+  updateGroceryRangeInfo();
+  renderGrocery();
+}
+
+function updateGroceryRangeInfo() {
+  const el = document.getElementById('groceryRangeInfo');
+  if (!el) return;
+  // Count how many days and meals are in range
+  const days = Math.round((groceryEnd - groceryStart) / (1000*60*60*24)) + 1;
+  let mealCount = 0;
+  const ddDates = new Set((data.doordash||{orders:[]}).orders.map(o=>o.date));
+  const cursor = new Date(groceryStart);
+  while (cursor <= groceryEnd) {
+    const dk = dateKey(cursor);
+    if (!ddDates.has(dk) && (data.mealPlan[dk]||[]).length) mealCount++;
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  el.textContent = `${days} day${days!==1?'s':''}, ${mealCount} meal${mealCount!==1?'s':''} with ingredients`;
+}
+
+// --- Quantity parsing (shared by grocery merging and serving scaling) ---
+const _UNI_FRAC = { '¼': '1/4', '½': '1/2', '¾': '3/4', '⅓': '1/3', '⅔': '2/3', '⅛': '1/8' };
+function parseQty(q) {
+  if (!q) return null;
+  q = String(q).trim().replace(/[¼½¾⅓⅔⅛]/g, c => ' ' + _UNI_FRAC[c]).replace(/\s+/g, ' ').trim();
+  // "1 1/2 cups" or "1/2 tsp"
+  let m = q.match(/^(?:(\d+)\s+)?(\d+)\s*\/\s*(\d+)\s*(.*)$/);
+  if (m && parseInt(m[3], 10)) {
+    const num = (m[1] ? parseInt(m[1], 10) : 0) + parseInt(m[2], 10) / parseInt(m[3], 10);
+    return num ? { num, unit: (m[4] || '').trim() } : null;
+  }
+  // "2 cups", "1.5 lb", "3"
+  m = q.match(/^(\d+(?:\.\d+)?)\s*(.*)$/);
+  if (!m) return null;
+  const num = parseFloat(m[1]);
+  return num ? { num, unit: (m[2] || '').trim() } : null;
+}
+function fmtQtyNum(n) {
+  const whole = Math.floor(n + 1e-9), frac = n - whole;
+  const F = [[0, ''], [0.25, '¼'], [1 / 3, '⅓'], [0.5, '½'], [2 / 3, '⅔'], [0.75, '¾']];
+  let best = null, bestD = 0.05;
+  F.forEach(([v, s]) => { const d = Math.abs(frac - v); if (d < bestD) { bestD = d; best = s; } });
+  if (best === null) return String(Math.round(n * 100) / 100);
+  if (!whole && !best) return '0';
+  return (whole || !best ? whole : '') + best;
+}
+function normUnit(u) {
+  u = (u || '').toLowerCase().replace(/\.$/, '').replace(/\s+of$/, '').trim();
+  const map = { tablespoons: 'tbsp', tablespoon: 'tbsp', tbsps: 'tbsp', teaspoons: 'tsp', teaspoon: 'tsp', tsps: 'tsp', pounds: 'lb', pound: 'lb', lbs: 'lb', ounces: 'oz', ounce: 'oz', grams: 'g', gram: 'g' };
+  if (map[u]) return map[u];
+  return u.length > 2 ? u.replace(/s$/, '') : u;
+}
+// Scale "1 1/2 cups" by 2 → "3 cups"; unparseable quantities get a ×2 marker
+function scaleQty(q, factor) {
+  if (!q || factor === 1) return q || '';
+  const p = parseQty(q);
+  if (!p) return q + ' ×' + fmtQtyNum(factor);
+  let unit = p.unit;
+  const scaled = p.num * factor;
+  // Fix plurals: "1 cup" ×2 → "2 cups", "2 cups" ×0.5 → "1 cup"
+  if (/^[a-z]+s$/i.test(unit) && scaled <= 1) unit = unit.replace(/s$/i, '');
+  else if (/^(cup|clove|can|slice|piece|egg|onion|carrot|lime|lemon)$/i.test(unit) && scaled > 1) unit += 's';
+  return fmtQtyNum(scaled) + (unit ? ' ' + unit : '');
+}
+// Combine ["1 lb","1 lb","2 cups"] → summed when units match, joined otherwise
+function combineQuantities(qs) {
+  if (!qs || !qs.length) return '';
+  if (qs.length === 1) return qs[0];
+  const parsed = qs.map(parseQty);
+  if (parsed.every(Boolean)) {
+    const u0 = normUnit(parsed[0].unit);
+    if (parsed.every(p => normUnit(p.unit) === u0)) {
+      const total = parsed.reduce((s, p) => s + p.num, 0);
+      // Prefer an already-plural unit spelling when the total warrants it
+      let unit = parsed[0].unit;
+      if (total > 1) { const plural = parsed.map((p, i) => qs[i]).map(q => (parseQty(q) || {}).unit).find(u => /s$/i.test(u || '')); if (plural) unit = plural; }
+      else if (/^[a-z]+s$/i.test(unit)) unit = unit.replace(/s$/i, '');
+      return fmtQtyNum(total) + (unit ? ' ' + unit : '');
+    }
+  }
+  return qs.join(' + ');
+}
+
+function getGroceryItems() {
+  const items = {};
+  const ddDates = new Set((data.doordash||{orders:[]}).orders.map(o=>o.date));
+  // Iterate from groceryStart to groceryEnd
+  const cursor = new Date(groceryStart);
+  while (cursor <= groceryEnd) {
+    const dk = dateKey(cursor);
+    if (!ddDates.has(dk)) {
+      (data.mealPlan[dk]||[]).forEach(m => {
+        const r = data.recipes.find(x => x.id === m.recipeId);
+        if (!r) return;
+        r.ingredients.forEach(ing => {
+          const key = ing.name.toLowerCase();
+          if (!items[key]) items[key] = { name: ing.name, quantities: [], category: ing.category };
+          if (ing.quantity) items[key].quantities.push(ing.quantity);
+        });
+      });
+    }
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  (data.staples||[]).forEach(s => { if (!s.name) return; const key = s.name.toLowerCase(); if (!items[key]) items[key] = { name: s.name, quantities: [], category: s.category||'Other' }; if (s.quantity) items[key].quantities.push(s.quantity + ' (staple)'); });
+  (data.groceryExtras||[]).forEach(x => { if (!x.name) return; const key = x.name.toLowerCase(); if (!items[key]) items[key] = { name: x.name, quantities: [], category: x.category||'Other', isExtra: true }; if (x.quantity) items[key].quantities.push(x.quantity); else items[key].isExtra = true; });
+  return items;
+}
+
+function renderGrocery() {
+  initGroceryDates();
+  const items = getGroceryItems();
+  const byCategory = {};
+  Object.values(items).forEach(item => { if (!byCategory[item.category]) byCategory[item.category] = []; byCategory[item.category].push(item); });
+  const el = document.getElementById('groceryContent');
+  if (!Object.keys(byCategory).length) { el.innerHTML = '<div class="empty-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/><path d="M3 6h18M16 10a4 4 0 01-8 0"/></svg><p>No meals planned in this range.<br>Adjust the dates or plan some dinners!</p></div>'; return; }
+  let html = '';
+  let total = 0, done = 0;
+  CATEGORIES.forEach(cat => {
+    const ci = byCategory[cat]; if (!ci || !ci.length) return;
+    ci.sort((a,b) => a.name.localeCompare(b.name));
+    const catDone = ci.filter(i => data.checkedItems[i.name.toLowerCase()]).length;
+    total += ci.length; done += catDone;
+    const allDone = catDone === ci.length;
+    html += `<div class="grocery-category ${allDone ? 'collapsed' : ''}"><h3 onclick="this.parentElement.classList.toggle('collapsed')">${cat}<span class="cat-count">${catDone}/${ci.length}</span><span class="cat-chevron">▾</span></h3>`;
+    ci.forEach(item => {
+      const key = item.name.toLowerCase();
+      const checked = data.checkedItems[key] ? 'checked' : '';
+      html += `<div class="grocery-item ${checked}" data-key="${esc(key)}" role="checkbox" aria-checked="${checked ? 'true' : 'false'}" onclick="toggleCheck(this,'${esc(key)}')"><span class="gcheck"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span><span class="item-name">${esc(item.name)}</span><span class="item-qty">${esc(combineQuantities(item.quantities))}</span>${item.isExtra ? `<button onclick="event.stopPropagation();removeGroceryExtra('${esc(key)}')" style="margin-left:auto;background:none;border:none;color:var(--red);font-size:16px;padding:2px 6px;flex-shrink:0;">✕</button>` : ''}</div>`;
+    });
+    html += '</div>';
+  });
+  const pct = total ? Math.round(done / total * 100) : 0;
+  el.innerHTML = `<div class="grocery-progress"><div class="grocery-progress-label"><span>🛒 ${done} of ${total}</span><span id="groceryPct">${pct}%</span></div><div class="grocery-progress-track"><div class="grocery-progress-fill" id="groceryFill" style="width:${pct}%"></div></div></div>` + html;
+}
+
+function updateGroceryProgress() {
+  const rows = document.querySelectorAll('.grocery-item');
+  const total = rows.length;
+  let done = 0;
+  rows.forEach(r => { if (r.classList.contains('checked')) done++; });
+  const pct = total ? Math.round(done / total * 100) : 0;
+  const fill = document.getElementById('groceryFill');
+  const label = document.querySelector('.grocery-progress-label span');
+  const pctEl = document.getElementById('groceryPct');
+  if (fill) fill.style.width = pct + '%';
+  if (label) label.textContent = `🛒 ${done} of ${total}`;
+  if (pctEl) pctEl.textContent = pct + '%';
+  // Update per-category counts
+  document.querySelectorAll('.grocery-category').forEach(cat => {
+    const items = cat.querySelectorAll('.grocery-item');
+    const catDone = cat.querySelectorAll('.grocery-item.checked').length;
+    const count = cat.querySelector('.cat-count');
+    if (count) count.textContent = catDone + '/' + items.length;
+  });
+  return { done, total };
+}
+
+let _groceryCelebrated = false;
+function celebrateGroceryDone() {
+  const emojis = ['🎉', '🛒', '✨', '🥳', '🎊'];
+  for (let i = 0; i < 10; i++) {
+    const e = document.createElement('div');
+    e.className = 'celebrate-emoji';
+    e.textContent = emojis[i % emojis.length];
+    e.style.left = (10 + Math.random() * 80) + '%';
+    e.style.animationDelay = (Math.random() * 0.4) + 's';
+    document.body.appendChild(e);
+    setTimeout(() => e.remove(), 1800);
+  }
+  toast('List complete — nice work! 🎉');
+}
+
+function toggleCheck(el, key) {
+  data.checkedItems[key] = !data.checkedItems[key];
+  // Quick DOM update without full re-render
+  el.classList.toggle('checked', !!data.checkedItems[key]);
+  el.setAttribute('aria-checked', data.checkedItems[key] ? 'true' : 'false');
+  persist();
+  const { done, total } = updateGroceryProgress();
+  if (total > 0 && done === total && !_groceryCelebrated) { _groceryCelebrated = true; celebrateGroceryDone(); }
+  if (done < total) _groceryCelebrated = false;
+}
+function addGroceryExtra() {
+  const nameEl = document.getElementById('groceryAddName');
+  const catEl = document.getElementById('groceryAddCat');
+  const name = nameEl.value.trim();
+  if (!name) { nameEl.focus(); return; }
+  if (!data.groceryExtras) data.groceryExtras = [];
+  // Avoid duplicates
+  if (!data.groceryExtras.find(x => x.name.toLowerCase() === name.toLowerCase())) {
+    data.groceryExtras.push({ name, category: catEl.value || 'Other' });
+    persist();
+  }
+  nameEl.value = '';
+  catEl.value = 'Other';
+  renderGrocery();
+  toast('Added ' + name);
+}
+function removeGroceryExtra(key) {
+  if (!data.groceryExtras) return;
+  data.groceryExtras = data.groceryExtras.filter(x => x.name.toLowerCase() !== key);
+  delete data.checkedItems[key];
+  persist(); renderGrocery();
+}
+function uncheckAll() { data.checkedItems={}; persist(); renderGrocery(); toast('Reset'); }
+
+function copyGroceryList() {
+  const items=getGroceryItems();const byCategory={};
+  Object.values(items).forEach(item=>{if(!byCategory[item.category])byCategory[item.category]=[];byCategory[item.category].push(item);});
+  let text='Grocery List\n============\n\n';
+  CATEGORIES.forEach(cat=>{const ci=byCategory[cat];if(!ci||!ci.length)return;text+=cat+':\n';ci.sort((a,b)=>a.name.localeCompare(b.name)).forEach(item=>{text+=`  - ${item.name}${item.quantities.length?' ('+item.quantities.join(', ')+')':''}\n`;});text+='\n';});
+  navigator.clipboard.writeText(text).then(()=>toast('Copied!'));
+}
+
+// ===========================================================================
+// STAPLES
+// ===========================================================================
+function renderStaples() {
+  const el=document.getElementById('staplesList');
+  if(!data.staples||!data.staples.length){el.innerHTML='<p style="font-size:14px;color:var(--text-secondary);">No staples yet.</p>';return;}
+  el.innerHTML=data.staples.map((s,i)=>`<div class="staple-row"><input type="text" placeholder="Item" value="${esc(s.name)}" onchange="updateStaple(${i},'name',this.value)"><input type="text" placeholder="Qty" value="${esc(s.quantity||'')}" onchange="updateStaple(${i},'quantity',this.value)"><select onchange="updateStaple(${i},'category',this.value)">${CATEGORIES.map(c=>`<option ${c===(s.category||'Other')?'selected':''}>${c}</option>`).join('')}</select><button onclick="removeStaple(${i})">&times;</button></div>`).join('');
+}
+function addStapleRow(){if(!data.staples)data.staples=[];data.staples.push({name:'',quantity:'',category:'Other'});persist();renderStaples();}
+function updateStaple(i,field,value){if(data.staples[i]){data.staples[i][field]=value;persist();}}
+function removeStaple(i){data.staples.splice(i,1);persist();renderStaples();}
+
+// ===========================================================================
+// CUISINE MANAGEMENT
+// ===========================================================================
+function renderCuisines() {
+  const el = document.getElementById('cuisinesList'); if (!el) return;
+  const cuisines = getCuisines();
+  el.innerHTML = cuisines.map((c, i) => `<div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
+    <span style="flex:1; font-size:14px; padding:6px 0;">${esc(c)}</span>
+    <button onclick="removeCuisine(${i})" style="background:none; border:none; color:var(--red); font-size:18px; padding:4px 8px; line-height:1;" title="Remove">&times;</button>
+  </div>`).join('');
+}
+function addCuisine() {
+  const input = document.getElementById('newCuisineInput');
+  const name = (input.value || '').trim();
+  if (!name) return;
+  if (!data.cuisines) data.cuisines = [...DEFAULT_CUISINES];
+  if (data.cuisines.some(c => c.toLowerCase() === name.toLowerCase())) { toast('That cuisine already exists'); return; }
+  data.cuisines.push(name);
+  data.cuisines.sort();
+  input.value = '';
+  persist();
+  renderCuisines();
+  toast('Added "' + name + '"');
+}
+function removeCuisine(i) {
+  if (!data.cuisines) return;
+  const name = data.cuisines[i];
+  data.cuisines.splice(i, 1);
+  persist();
+  renderCuisines();
+  toast('Removed "' + name + '"');
+}
+
+// ===========================================================================
+// CALENDAR
+// ===========================================================================
+function exportCalendar() {
+  let events='';
+  for(let i=0;i<7;i++){const d=new Date(currentWeekStart);d.setDate(d.getDate()+i);const dk=dateKey(d);(data.mealPlan[dk]||[]).forEach(m=>{const r=data.recipes.find(x=>x.id===m.recipeId);if(!r)return;events+=`BEGIN:VEVENT\r\nDTSTART:${dk.replace(/-/g,'')}T180000\r\nDTEND:${dk.replace(/-/g,'')}T190000\r\nSUMMARY:Dinner: ${r.name}\r\nDESCRIPTION:${(r.notes||'').replace(/\n/g,'\\n')}\r\nUID:${uid()}@mealplanner\r\nEND:VEVENT\r\n`;});}
+  if(!events){toast('No dinners planned');return;}
+  downloadFile('meal-plan.ics',`BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//MealPlanner//EN\r\n${events}END:VCALENDAR`,'text/calendar');
+  toast('Calendar exported!');
+}
+
+// ===========================================================================
+// SETTINGS / SYNC
+// ===========================================================================
+function renderDoorDashSettings() {
+  const dd = ensureDD();
+  document.getElementById('ddBudget').value = dd.monthlyBudget || '';
+  document.getElementById('ddTarget').value = dd.monthlyTarget || '';
+  // Populate cuisine dropdown for new restaurant
+  const sel = document.getElementById('newDDRestCuisine');
+  sel.innerHTML = getCuisines().map(c=>`<option>${esc(c)}</option>`).join('');
+  // Render restaurant list
+  renderDDRestaurants();
+}
+
+function renderDDRestaurants() {
+  const dd = ensureDD();
+  const el = document.getElementById('ddRestaurantsList');
+  if (!dd.restaurants.length) { el.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">No restaurants yet.</p>'; return; }
+  el.innerHTML = dd.restaurants.map((r,i) => `<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+    <span style="flex:1;font-size:14px;">${esc(r.name)}</span>
+    <span style="font-size:12px;color:var(--accent);font-weight:600;">${esc(r.cuisine||'')}</span>
+    <button onclick="removeDDRestaurant(${i})" style="background:none;border:none;color:var(--red);font-size:18px;padding:4px 8px;line-height:1;" title="Remove">&times;</button>
+  </div>`).join('');
+}
+
+function addDDRestaurant() {
+  const nameEl = document.getElementById('newDDRestName');
+  const cuisineEl = document.getElementById('newDDRestCuisine');
+  const name = (nameEl.value||'').trim();
+  if (!name) return;
+  const dd = ensureDD();
+  if (dd.restaurants.some(r=>r.name.toLowerCase()===name.toLowerCase())) { toast('Already in your list'); return; }
+  dd.restaurants.push({ name, cuisine: cuisineEl.value });
+  dd.restaurants.sort((a,b)=>a.name.localeCompare(b.name));
+  nameEl.value = '';
+  persist(); renderDDRestaurants();
+  toast('Added '+name);
+}
+
+function removeDDRestaurant(i) {
+  const dd = ensureDD();
+  const name = dd.restaurants[i].name;
+  dd.restaurants.splice(i,1);
+  persist(); renderDDRestaurants();
+  toast('Removed '+name);
+}
+
+function saveDoorDashSettings() {
+  const dd = ensureDD();
+  const b = document.getElementById('ddBudget').value;
+  const t = document.getElementById('ddTarget').value;
+  dd.monthlyBudget = b ? parseFloat(b) : 0;
+  dd.monthlyTarget = t ? parseInt(t) : 0;
+  persist();
+  toast('Budget updated');
+}
+
+function renderSync() {
+  const badge=document.getElementById('syncBadge');const info=document.getElementById('syncInfo');
+  const mealCount=Object.values(data.mealPlan).reduce((s,m)=>s+m.length,0);
+  if(firebaseReady){
+    badge.textContent='Live Sync';badge.style.cssText='font-size:12px;font-weight:600;padding:3px 10px;border-radius:20px;background:var(--green-light);color:var(--green);';
+    info.innerHTML=`<span class="sync-dot connected"></span>Connected as family <strong>${familyCode}</strong><br>${data.recipes.length} recipes &middot; ${mealCount} dinners planned &middot; ${(data.staples||[]).length} staples`;
+  } else {
+    badge.textContent='Local Only';badge.style.cssText='font-size:12px;font-weight:600;padding:3px 10px;border-radius:20px;background:var(--blue-light);color:var(--blue);';
+    info.innerHTML=`<span class="sync-dot offline"></span>Firebase not configured. Data saved on this device only.<br>Family code: <strong>${familyCode||'—'}</strong>`;
+  }
+}
+
+function loadSampleData() {
+  if(data.recipes.length&&!confirm('Replace current data with samples?'))return;
+  data.recipes = [
+    {id:uid(),name:'Chicken Stir Fry',cuisine:'Asian',url:'',ingredients:[{name:'Chicken breast',quantity:'1 lb',category:'Meat & Seafood'},{name:'Broccoli',quantity:'2 cups',category:'Produce'},{name:'Soy sauce',quantity:'3 tbsp',category:'Pantry'},{name:'Rice',quantity:'1 cup',category:'Pantry'},{name:'Garlic',quantity:'3 cloves',category:'Produce'},{name:'Sesame oil',quantity:'1 tbsp',category:'Pantry'}],notes:'Cook rice first. Stir fry chicken until golden, add veggies and sauce.'},
+    {id:uid(),name:'Pasta Bolognese',cuisine:'Italian',url:'',ingredients:[{name:'Ground beef',quantity:'1 lb',category:'Meat & Seafood'},{name:'Spaghetti',quantity:'1 lb',category:'Pantry'},{name:'Crushed tomatoes',quantity:'28 oz can',category:'Pantry'},{name:'Onion',quantity:'1',category:'Produce'},{name:'Garlic',quantity:'4 cloves',category:'Produce'},{name:'Parmesan',quantity:'1/2 cup',category:'Dairy'}],notes:'Simmer sauce 30+ minutes for best flavor.'},
+    {id:uid(),name:'Sheet Pan Salmon',cuisine:'Mediterranean',url:'',ingredients:[{name:'Salmon fillets',quantity:'2',category:'Meat & Seafood'},{name:'Asparagus',quantity:'1 bunch',category:'Produce'},{name:'Lemon',quantity:'1',category:'Produce'},{name:'Olive oil',quantity:'2 tbsp',category:'Pantry'},{name:'Cherry tomatoes',quantity:'1 pint',category:'Produce'}],notes:'400F for 15 min. Season with salt, pepper, dill.'},
+    {id:uid(),name:'Tacos',cuisine:'Mexican',url:'',ingredients:[{name:'Ground turkey',quantity:'1 lb',category:'Meat & Seafood'},{name:'Taco shells',quantity:'1 box',category:'Pantry'},{name:'Lettuce',quantity:'1 head',category:'Produce'},{name:'Tomatoes',quantity:'2',category:'Produce'},{name:'Shredded cheese',quantity:'1 cup',category:'Dairy'},{name:'Sour cream',quantity:'1/2 cup',category:'Dairy'},{name:'Salsa',quantity:'1 jar',category:'Pantry'}],notes:'Cumin, chili powder, paprika for seasoning.'},
+    {id:uid(),name:'Caesar Salad with Chicken',cuisine:'Salads & Light',url:'',ingredients:[{name:'Romaine lettuce',quantity:'2 heads',category:'Produce'},{name:'Chicken breast',quantity:'2',category:'Meat & Seafood'},{name:'Caesar dressing',quantity:'1/2 cup',category:'Pantry'},{name:'Croutons',quantity:'1 cup',category:'Bakery'},{name:'Parmesan',quantity:'1/4 cup',category:'Dairy'}],notes:'Grill chicken, slice, toss with salad.'},
+    {id:uid(),name:'One-Pot Mac and Cheese',cuisine:'Comfort Food',url:'',ingredients:[{name:'Elbow macaroni',quantity:'1 lb',category:'Pantry'},{name:'Milk',quantity:'3 cups',category:'Dairy'},{name:'Shredded cheddar',quantity:'2 cups',category:'Dairy'},{name:'Butter',quantity:'2 tbsp',category:'Dairy'},{name:'Mustard powder',quantity:'1 tsp',category:'Pantry'}],notes:'Cook pasta in milk, stirring often. Add cheese until melty. Kid favorite!'},
+  ];
+  data.staples = [{name:'Milk',quantity:'1 gallon',category:'Dairy'},{name:'Eggs',quantity:'1 dozen',category:'Dairy'},{name:'Bread',quantity:'1 loaf',category:'Bakery'},{name:'Bananas',quantity:'1 bunch',category:'Produce'},{name:'Butter',quantity:'1 stick',category:'Dairy'},{name:'Coffee',quantity:'1 bag',category:'Beverages'}];
+  data.children = [{name:'',birthday:'2022-03-01'},{name:'',birthday:'2024-11-01'}];
+  data.mealPlan={}; data.checkedItems={};
+  persist(); renderSync(); renderKids();
+  toast('Samples loaded! Set your kids\' names in Settings.');
+}
+
+// ===========================================================================
+// UTILITIES
+// ===========================================================================
+function esc(s){if(!s)return'';const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
+// Chat histories survive reloads (keep the last 40 messages)
+function loadChatHistory(key){try{const h=JSON.parse(localStorage.getItem(key));return Array.isArray(h)?h:[];}catch(e){return [];}}
+function saveChatHistory(key,hist){try{localStorage.setItem(key,JSON.stringify(hist.slice(-40)));}catch(e){}}
+// Only allow http(s) URLs in href/src built from external content (RSS feeds etc.)
+function safeUrl(u){if(!u)return'';try{const p=new URL(u,location.href);if(p.protocol==='http:'||p.protocol==='https:')return esc(p.href);}catch(e){}return'';}
+// Deep link into DoorDash — to a restaurant search when known, else the home page.
+// Universal links open the DoorDash app on phones when it's installed.
+function doordashUrl(name){
+  if(!name) return 'https://www.doordash.com/';
+  // /search/store/<name>/ returns real results; strip apostrophes (incl. curly) which hurt the match
+  const q = name.replace(/[‘’'`]/g,'').trim().replace(/\s+/g,' ');
+  return 'https://www.doordash.com/search/store/' + encodeURIComponent(q) + '/';
+}
+function openDoorDash(name){ window.open(doordashUrl(name), '_blank', 'noopener'); }
+function downloadFile(name,content,type){const b=new Blob([content],{type});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=name;a.click();URL.revokeObjectURL(a.href);}
+function toast(msg){const el=document.getElementById('toast');el.textContent=msg;el.classList.add('show');setTimeout(()=>el.classList.remove('show'),3000);}
+
+// ===========================================================================
+// COOK MODE
+// ===========================================================================
+let _cook = null; // { recipe, steps, idx, timers: {stepIdx: {remaining, interval}} }
+let _cookWakeLock = null;
+
+function parseCookSteps(r) {
+  const text = (r.notes || '').trim();
+  let steps = [];
+  if (text) {
+    // Prefer line breaks; fall back to sentences for one-line notes
+    steps = text.split(/\n+/).map(s => s.trim()).filter(Boolean);
+    if (steps.length === 1) steps = text.split(/(?<=[.!?])\s+(?=[A-Z0-9])/).map(s => s.trim()).filter(Boolean);
+    // Strip leading "1." / "Step 2:" numbering
+    steps = steps.map(s => s.replace(/^(step\s*)?\d+[\.\):]\s*/i, ''));
+  }
+  if (!steps.length) steps = ['No instructions saved for this recipe yet — cook from memory, you\'ve got this. Tap edit on the recipe to add steps for next time.'];
+  return steps;
+}
+
+function _ingMatchesStep(ing, lowerStep) {
+  if (!ing.name) return false;
+  // Match on the longest word of the ingredient name (skips "of", "fresh", sizes)
+  const words = ing.name.toLowerCase().split(/[^a-z]+/).filter(w => w.length > 3);
+  return words.some(w => lowerStep.includes(w));
+}
+
+function stepIngredients(r, stepText) {
+  const lower = stepText.toLowerCase();
+  return (r.ingredients || []).filter(ing => _ingMatchesStep(ing, lower));
+}
+
+function detectTimer(stepText) {
+  const m = stepText.match(/(\d+)\+?(?:\s*(?:[-–]|to)\s*(\d+))?\s*(hours?|hrs?|minutes?|mins?)\b/i);
+  if (!m) return null;
+  const n = parseInt(m[2] || m[1], 10);
+  const secs = /h/i.test(m[3]) ? n * 3600 : n * 60;
+  return { label: m[0], seconds: secs };
+}
+
+async function acquireCookWakeLock() {
+  try {
+    if ('wakeLock' in navigator) _cookWakeLock = await navigator.wakeLock.request('screen');
+  } catch (e) { console.log('WakeLock:', e.message); }
+}
+document.addEventListener('visibilitychange', () => {
+  // Reacquire the wake lock when the user comes back mid-cook or to the kitchen display
+  if (document.visibilityState === 'visible' && (_cook || fridgeOpen())) acquireCookWakeLock();
+});
+
+function openCookMode(recipeId) {
+  const r = data.recipes.find(x => x.id === recipeId); if (!r) return;
+  _cook = { recipe: r, steps: parseCookSteps(r), idx: 0, timers: {}, ingrChecked: {}, scale: 1 };
+  document.getElementById('cookTitle').textContent = r.name;
+  document.getElementById('cookMode').classList.add('open');
+  document.getElementById('cookIngrOverlay').classList.remove('open');
+  const vb = document.getElementById('cookVoiceBtn');
+  if (vb) vb.style.display = voiceSupported() ? '' : 'none';
+  updateVoiceBtn();
+  acquireCookWakeLock();
+  renderCookStep();
+  renderCookTimers();
+  const presets = document.getElementById('timerPresets'); if (presets) presets.style.display = 'none';
+}
+
+// --- Cook mode ingredients (pinned panel on wide screens, overlay on phones) ---
+function renderCookIngredients() {
+  if (!_cook) return;
+  const { recipe, steps, idx } = _cook;
+  const ings = recipe.ingredients || [];
+  const btn = document.getElementById('cookIngrBtn');
+  const panel = document.getElementById('cookIngrPanel');
+  if (!ings.length) {
+    if (btn) btn.style.display = 'none';
+    if (panel) panel.style.display = 'none';
+    return;
+  }
+  if (btn) btn.style.display = '';
+  if (panel) panel.style.display = '';
+  const lower = (steps[idx] || '').toLowerCase();
+  const scale = _cook.scale || 1;
+  const scaleRow = `<div class="cook-scale-row">` + [[0.5,'½×'],[1,'1×'],[2,'2×'],[3,'3×']].map(([v,l]) =>
+    `<button class="${scale===v?'active':''}" onclick="setCookScale(${v})">${l}</button>`).join('') +
+    (recipe.servings ? `<span class="cook-scale-serves">serves ${scale === 1 ? recipe.servings : fmtQtyNum(recipe.servings * scale)}</span>` : '') + `</div>`;
+  const html = scaleRow + ings.map((ing, i) => {
+    const inStep = _ingMatchesStep(ing, lower);
+    const checked = _cook.ingrChecked[i];
+    return `<div class="cook-ingr-item ${checked ? 'checked' : ''}${inStep ? ' instep' : ''}" onclick="toggleCookIngredient(${i})">
+      <span class="ci-box">${checked ? '✓' : ''}</span>
+      <span class="ci-txt">${ing.quantity ? '<span class="ci-qty">' + esc(scaleQty(ing.quantity, scale)) + '</span>' : ''}${esc(ing.name)}</span>
+    </div>`;
+  }).join('');
+  const p = document.getElementById('cookIngrListPanel'); if (p) p.innerHTML = html;
+  const o = document.getElementById('cookIngrListOverlay'); if (o) o.innerHTML = html;
+  const back = document.getElementById('cookIngrBackBtn'); if (back) back.textContent = '← Back to step ' + (idx + 1);
+}
+
+function toggleCookIngredient(i) {
+  if (!_cook) return;
+  _cook.ingrChecked[i] = !_cook.ingrChecked[i];
+  renderCookIngredients();
+}
+
+function setCookScale(s) {
+  if (!_cook) return;
+  _cook.scale = s;
+  renderCookStep(); // re-renders "for this step" quantities + ingredient lists
+}
+
+function toggleCookIngredients(open) {
+  document.getElementById('cookIngrOverlay').classList.toggle('open', open);
+}
+
+function closeCookMode() {
+  _cook = null;
+  _cookTimers = [];
+  stopAlarm();
+  stopCookVoice();
+  document.getElementById('cookMode').classList.remove('open');
+  document.getElementById('cookIngrOverlay').classList.remove('open');
+  const fridgeOpen = document.getElementById('fridgeMode').classList.contains('open');
+  // Keep the screen awake if we dropped back into the kitchen display
+  if (_cookWakeLock && !fridgeOpen) { _cookWakeLock.release().catch(()=>{}); _cookWakeLock = null; }
+  if (fridgeOpen) renderFridgeMode();
+}
+
+// --- Customizable multi-timers (run concurrently while cooking) ---
+let _cookTimers = [];
+let _timerSeq = 0;
+
+// --- Alarm engine ---
+// iOS blocks audio that wasn't unlocked by a touch, so we keep ONE AudioContext
+// and resume it on every user gesture. Timers store an absolute end timestamp
+// (not a decrementing counter), so throttled background tabs can't lose time.
+let _audioCtx = null;
+// Second audio channel: a real alarm sound in an <audio> element. iOS lets an
+// element that was unlocked by ANY earlier tap play again later without a
+// gesture, and it survives the AudioContext suspensions that mute WebAudio.
+// (The WAV starts with 150ms of silence so the unlock play/pause is inaudible.)
+const ALARM_SOUND = 'data:audio/wav;base64,UklGRiRkAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQBkAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA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';
+let _alarmAudio = null, _alarmAudioUnlocked = false;
+function unlockAudio() {
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (AC) {
+      if (!_audioCtx) _audioCtx = new AC();
+      if (_audioCtx.state !== 'running') _audioCtx.resume();
+    }
+  } catch (e) {}
+  if (!_alarmAudioUnlocked) {
+    try {
+      if (!_alarmAudio) { _alarmAudio = new Audio(ALARM_SOUND); _alarmAudio.loop = true; _alarmAudio.setAttribute('playsinline', ''); }
+      // Mute the priming play. iOS only cares that play() happened inside a
+      // user gesture, not that it was audible — so this unlocks the element
+      // while guaranteeing silence, instead of racing a pause against the
+      // audio's leading silence (which leaked a chime on app open).
+      _alarmAudio.muted = true;
+      const p = _alarmAudio.play();
+      const settle = () => {
+        try { _alarmAudio.pause(); _alarmAudio.currentTime = 0; } catch (e) {}
+        _alarmAudio.muted = false;
+        _alarmAudioUnlocked = true;
+      };
+      if (p && p.then) p.then(settle).catch(() => { _alarmAudio.muted = false; }); else settle();
+    } catch (e) {}
+  }
+}
+document.addEventListener('touchstart', unlockAudio, { passive: true });
+document.addEventListener('click', unlockAudio);
+document.addEventListener('visibilitychange', () => {
+  // Coming back to the app: revive a context iOS suspended while we were away
+  if (document.visibilityState === 'visible' && _audioCtx && _audioCtx.state !== 'running') { try { _audioCtx.resume(); } catch (e) {} }
+});
+
+function playBeepBurst() {
+  try {
+    if (!_audioCtx) unlockAudio();
+    const a = _audioCtx;
+    if (!a) return false;
+    if (a.state !== 'running') { try { a.resume(); } catch (e) {} }
+    [880, 880, 1175].forEach((f, i) => {
+      const o = a.createOscillator(), g = a.createGain();
+      o.connect(g); g.connect(a.destination); o.type = 'sine'; o.frequency.value = f;
+      const t0 = a.currentTime + i * 0.28;
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(0.4, t0 + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.24);
+      o.start(t0); o.stop(t0 + 0.26);
+    });
+    return true;
+  } catch (e) { return false; }
+}
+
+// Rings every 2s (sound + vibration + full-width banner) until dismissed, 60s max
+let _alarmInterval = null, _alarmUntil = 0;
+function startAlarm(label) {
+  clearInterval(_alarmInterval);
+  _alarmUntil = Date.now() + 60000;
+  const banner = document.getElementById('alarmBanner');
+  if (banner) {
+    document.getElementById('alarmBannerText').textContent = label;
+    banner.classList.add('on');
+  }
+  // Main channel: the looping bell through the unlocked <audio> element
+  try {
+    if (_alarmAudio) { _alarmAudio.muted = false; _alarmAudio.currentTime = 0; const p = _alarmAudio.play(); if (p && p.catch) p.catch(() => {}); }
+  } catch (e) {}
+  const ring = () => {
+    if (Date.now() > _alarmUntil) { stopAlarm(); return; }
+    playBeepBurst(); // backup channel + covers desktops
+    if (navigator.vibrate) navigator.vibrate([300, 120, 300]);
+  };
+  ring();
+  _alarmInterval = setInterval(ring, 2000);
+}
+function stopAlarm() {
+  clearInterval(_alarmInterval); _alarmInterval = null;
+  try { if (_alarmAudio) { _alarmAudio.pause(); _alarmAudio.currentTime = 0; } } catch (e) {}
+  const banner = document.getElementById('alarmBanner');
+  if (banner) banner.classList.remove('on');
+}
+function testAlarm() {
+  unlockAudio();
+  startAlarm('🔔 Alarm test — timers will sound like this');
+  _alarmUntil = Date.now() + 6000; // short ring for the test
+}
+function toggleTimerPresets() {
+  const el = document.getElementById('timerPresets');
+  el.style.display = el.style.display === 'none' ? 'flex' : 'none';
+}
+function addCustomTimer() {
+  const el = document.getElementById('customTimerMin');
+  const min = parseInt(el.value, 10);
+  if (min > 0) { addCookTimer(min); el.value = ''; }
+}
+// One shared 500ms ticker drives every timer off absolute end times
+let _timerTicker = null;
+function ensureTimerTicker() {
+  if (_timerTicker) return;
+  _timerTicker = setInterval(tickTimers, 500);
+}
+function tickTimers() {
+  const now = Date.now();
+  let any = false;
+  _cookTimers.forEach(t => {
+    if (t.done) { any = true; return; }
+    any = true;
+    if (now >= t.endAt) { t.done = true; startAlarm('⏱ ' + t.label + ' timer is done!'); }
+  });
+  renderCookTimers();
+  // Per-step timer
+  if (_cook) {
+    Object.keys(_cook.timers).forEach(idx => {
+      any = true;
+      const t = _cook.timers[idx];
+      if (now >= t.endAt) {
+        delete _cook.timers[idx];
+        startAlarm('⏱ Step ' + (Number(idx) + 1) + ' timer is done!');
+        if (_cook.idx === Number(idx)) renderCookStep();
+      } else if (_cook.idx === Number(idx)) {
+        const btn = document.getElementById('cookTimerBtn');
+        if (btn) btn.innerHTML = '⏱ ' + fmtCountdown(Math.ceil((t.endAt - now) / 1000));
+      }
+    });
+  }
+  if (!any) { clearInterval(_timerTicker); _timerTicker = null; }
+}
+function addCookTimer(min, label) {
+  unlockAudio(); // this runs inside the tap, so iOS lets the alarm play later
+  const t = { id: ++_timerSeq, label: label || (min + ' min'), endAt: Date.now() + min * 60000 };
+  _cookTimers.push(t);
+  ensureTimerTicker();
+  const presets = document.getElementById('timerPresets'); if (presets) presets.style.display = 'none';
+  renderCookTimers();
+}
+function dismissCookTimer(id) {
+  const i = _cookTimers.findIndex(t => t.id === id);
+  if (i > -1) { if (_cookTimers[i].done) stopAlarm(); _cookTimers.splice(i, 1); renderCookTimers(); }
+}
+function renderCookTimers() {
+  const el = document.getElementById('cookTimers'); if (!el) return;
+  const now = Date.now();
+  el.innerHTML = _cookTimers.map(t =>
+    `<button class="cook-chip ${t.done ? 'done' : ''}" onclick="dismissCookTimer(${t.id})">${t.done ? '✓' : '⏱'} ${esc(t.label)} ${t.done ? 'done — tap to dismiss' : fmtCountdown(Math.max(0, Math.ceil((t.endAt - now) / 1000)))} <span style="opacity:.6;margin-left:4px;">✕</span></button>`
+  ).join('');
+}
+
+function fmtCountdown(s) {
+  const m = Math.floor(s / 60), sec = s % 60;
+  return m + ':' + String(sec).padStart(2, '0');
+}
+
+function renderCookStep() {
+  if (!_cook) return;
+  const { recipe, steps, idx } = _cook;
+  document.getElementById('cookProgress').innerHTML = steps.map((_, i) => `<span class="${i <= idx ? 'done' : ''}"></span>`).join('');
+  const stepText = steps[idx];
+  const ingr = stepIngredients(recipe, stepText);
+  const timer = detectTimer(stepText);
+  const running = _cook.timers[idx];
+  let html = `<div>${esc(stepText)}</div>`;
+  if (timer || running) {
+    const t = running ? fmtCountdown(Math.max(0, Math.ceil((running.endAt - Date.now()) / 1000))) : timer.label;
+    html += `<div class="cook-timer ${running ? 'running' : ''}" id="cookTimerBtn" onclick="toggleCookTimer(${timer ? timer.seconds : 0})">⏱ ${running ? esc(t) : 'Start ' + esc(t) + ' timer'}</div>`;
+  }
+  if (ingr.length) {
+    const sc = _cook.scale || 1;
+    html += `<div class="cook-step-ingr"><strong>For this step:</strong><br>${ingr.map(i => esc((i.quantity ? scaleQty(i.quantity, sc) + ' ' : '') + i.name)).join('<br>')}</div>`;
+  }
+  // No saved steps? Offer to have Claude write them right here.
+  if (!(recipe.notes || '').trim() && getProxyUrl()) {
+    html += `<button class="btn btn-primary" style="margin-top:18px;align-self:flex-start;font-size:16px;padding:12px 20px;" onclick="generateRecipeSteps('${recipe.id}', this)">✨ Write steps with AI</button>`;
+  }
+  document.getElementById('cookStep').innerHTML = html;
+  document.getElementById('cookPrevBtn').style.visibility = idx === 0 ? 'hidden' : 'visible';
+  const nextBtn = document.getElementById('cookNextBtn');
+  nextBtn.textContent = idx === steps.length - 1 ? '✓ Done' : 'Next →';
+  renderCookIngredients();
+}
+
+function toggleCookTimer(seconds) {
+  if (!_cook) return;
+  unlockAudio(); // user gesture — unlock so the alarm can ring on the iPad
+  const idx = _cook.idx;
+  if (_cook.timers[idx]) { delete _cook.timers[idx]; renderCookStep(); return; }
+  _cook.timers[idx] = { endAt: Date.now() + seconds * 1000 };
+  ensureTimerTicker();
+  renderCookStep();
+}
+
+function cookNext() {
+  if (!_cook) return;
+  if (_cook.idx >= _cook.steps.length - 1) {
+    // Finished — log usage so smart planning knows this was made
+    if (!data.usageHistory) data.usageHistory = [];
+    data.usageHistory.push({ recipeId: _cook.recipe.id, date: dateKey(new Date()) });
+    persist();
+    const name = _cook.recipe.name;
+    closeCookMode();
+    toast('Enjoy dinner! ' + name + ' logged as made 🎉');
+    return;
+  }
+  _cook.idx++;
+  renderCookStep();
+}
+function cookPrev() { if (_cook && _cook.idx > 0) { _cook.idx--; renderCookStep(); } }
+
+// --- Voice control (cook mode) ---
+// "next" / "back" / "ingredients" / "read it" / "timer 5 minutes"
+let _voiceRec = null, _voiceOn = false;
+function voiceSupported() { return !!(window.SpeechRecognition || window.webkitSpeechRecognition); }
+function toggleCookVoice() {
+  if (!voiceSupported()) { toast('Voice control isn\'t supported in this browser'); return; }
+  _voiceOn ? stopCookVoice() : startCookVoice();
+}
+function startCookVoice() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  try {
+    _voiceRec = new SR();
+    _voiceRec.continuous = true;
+    _voiceRec.interimResults = false;
+    _voiceRec.lang = 'en-US';
+    _voiceRec.onresult = e => {
+      const txt = (e.results[e.results.length - 1][0].transcript || '').toLowerCase();
+      handleVoiceCommand(txt);
+    };
+    // Recognition sessions end on their own — restart while voice mode is on
+    _voiceRec.onend = () => { if (_voiceOn && _cook) { try { _voiceRec.start(); } catch (err) {} } };
+    _voiceRec.onerror = e => {
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { stopCookVoice(); toast('Microphone permission denied'); }
+    };
+    _voiceRec.start();
+    _voiceOn = true;
+    updateVoiceBtn();
+    toast('🎤 Listening — say "next", "back", "ingredients", or "timer 5 minutes"');
+  } catch (e) { _voiceOn = false; toast('Could not start the microphone'); }
+}
+function stopCookVoice() {
+  _voiceOn = false;
+  try { if (_voiceRec) { _voiceRec.onend = null; _voiceRec.stop(); } } catch (e) {}
+  _voiceRec = null;
+  updateVoiceBtn();
+}
+function updateVoiceBtn() {
+  const b = document.getElementById('cookVoiceBtn');
+  if (b) { b.classList.toggle('listening', _voiceOn); b.textContent = _voiceOn ? '🎤 On' : '🎤'; }
+}
+function handleVoiceCommand(txt) {
+  if (!_cook) return;
+  const timerMatch = txt.match(/timer\D*(\d+)\s*(?:minute|min)/) || txt.match(/(\d+)\s*(?:minute|min)\D*timer/);
+  if (timerMatch) { addCookTimer(parseInt(timerMatch[1], 10)); toast('⏱ ' + timerMatch[1] + ' min timer started'); return; }
+  if (/\b(next|forward)\b/.test(txt)) { cookNext(); if (_voiceOn && _cook) speakCurrentStep(); }
+  else if (/\b(back|previous)\b/.test(txt)) { cookPrev(); if (_voiceOn) speakCurrentStep(); }
+  else if (/\bingredient/.test(txt)) { const ov = document.getElementById('cookIngrOverlay'); toggleCookIngredients(!ov.classList.contains('open')); }
+  else if (/\b(read|repeat|again)\b/.test(txt)) speakCurrentStep();
+  else if (/\bstop alarm\b|\bdismiss\b/.test(txt)) stopAlarm();
+}
+function speakCurrentStep() {
+  if (!_cook || !('speechSynthesis' in window)) return;
+  try {
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance('Step ' + (_cook.idx + 1) + '. ' + _cook.steps[_cook.idx]);
+    u.rate = 0.95;
+    speechSynthesis.speak(u);
+  } catch (e) {}
+}
+
+// Swipe navigation — works with a knuckle when hands are messy
+(function() {
+  const el = document.getElementById('cookStep');
+  let startX = null;
+  el.addEventListener('touchstart', e => { startX = e.touches[0].clientX; }, { passive: true });
+  el.addEventListener('touchend', e => {
+    if (startX === null) return;
+    const dx = e.changedTouches[0].clientX - startX;
+    if (Math.abs(dx) > 60) { dx < 0 ? cookNext() : cookPrev(); }
+    startX = null;
+  }, { passive: true });
+})();
+
+// ===========================================================================
+// FRIDGE DISPLAY MODE
+// ===========================================================================
+let _fmTimer = null, _fmRefresh = null, _fmRotate = null, _fmSaverCheck = null, _fmDrift = null;
+function fridgeOpen() { const el = document.getElementById('fridgeMode'); return !!(el && el.classList.contains('open')); }
+
+function openFridgeMode() {
+  document.getElementById('fridgeMode').classList.add('open');
+  renderFridgeMode();
+  _fmTimer = setInterval(renderFridgeClock, 15000);
+  _fmRefresh = setInterval(() => { fetchWeather(); fetchCalendarEvents(); renderFridgeMode(); }, 5 * 60 * 1000);
+  _fmRotate = setInterval(rotateFridgeCards, 45000);
+  _fmSaverCheck = setInterval(checkFridgeSaver, 30000);
+  fmNoteActivity();
+  acquireCookWakeLock(); // keep the display awake too
+  // The in-app display reopens itself after a reload; kitchen.html is always the display
+  if (!IS_KITCHEN) { try { localStorage.setItem('mp_fridge_mode', '1'); } catch(e) {} }
+}
+
+function closeFridgeMode() {
+  document.getElementById('fridgeMode').classList.remove('open');
+  clearInterval(_fmTimer); clearInterval(_fmRefresh); clearInterval(_fmRotate); clearInterval(_fmSaverCheck);
+  hideFridgeAmbient();
+  if (_cookWakeLock && !_cook) { _cookWakeLock.release().catch(()=>{}); _cookWakeLock = null; }
+  try { localStorage.removeItem('mp_fridge_mode'); } catch(e) {}
+}
+
+// --- Ambient screensaver: after N idle minutes, fade to a dark drifting clock.
+// Kind to the iPad's panel (no static bright UI) and looks calm on the counter.
+let _fmLastActivity = Date.now();
+function fmNoteActivity() { _fmLastActivity = Date.now(); }
+document.addEventListener('pointerdown', fmNoteActivity, true);
+document.addEventListener('keydown', fmNoteActivity, true);
+
+function fmSaverDelayMs() {
+  const m = parseInt(localStorage.getItem('fm_saver_mins') || '5', 10);
+  return m > 0 ? m * 60 * 1000 : 0;
+}
+
+function checkFridgeSaver() {
+  const delay = fmSaverDelayMs(); if (!delay) return;
+  if (!document.getElementById('fridgeMode').classList.contains('open')) return;
+  if (document.getElementById('fmAmbient').classList.contains('open')) return;
+  if (typeof _cook !== 'undefined' && _cook) return;                     // mid-recipe: keep the steps up
+  if (document.getElementById('fmAppPanel').classList.contains('open')) return; // watching live appliance temps
+  const gIn = document.getElementById('fmGroceryInput');
+  if (gIn && (gIn.value || document.activeElement === gIn)) return;      // half-typed grocery item
+  if (Date.now() - _fmLastActivity >= delay) showFridgeAmbient();
+}
+
+function showFridgeAmbient() {
+  const el = document.getElementById('fmAmbient');
+  el.classList.add('open');
+  renderAmbientClock();
+  driftAmbient();
+  requestAnimationFrame(() => el.classList.add('visible'));
+  _fmDrift = setInterval(driftAmbient, 30000);
+}
+
+function hideFridgeAmbient() {
+  const el = document.getElementById('fmAmbient');
+  el.classList.remove('open', 'visible');
+  clearInterval(_fmDrift); _fmDrift = null;
+}
+
+function wakeFridgeMode(ev) {
+  if (ev) ev.stopPropagation();
+  hideFridgeAmbient();
+  fmNoteActivity();
+  renderFridgeMode();
+}
+
+// Glide the clock block to a new spot; the 14s CSS transition does the drifting.
+function driftAmbient() {
+  const block = document.getElementById('fmaBlock'); if (!block) return;
+  const maxX = Math.max(40, window.innerWidth - block.offsetWidth - 60);
+  const maxY = Math.max(40, window.innerHeight - block.offsetHeight - 60);
+  const x = 30 + Math.random() * (maxX - 30);
+  const y = 30 + Math.random() * (maxY - 30);
+  block.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
+}
+
+function renderAmbientClock() {
+  if (!document.getElementById('fmAmbient').classList.contains('open')) return;
+  const now = new Date();
+  document.getElementById('fmaClock').textContent = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  document.getElementById('fmaDate').textContent = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+  const bits = [];
+  if (weatherCache && weatherCache.current && typeof weatherCache.current.temperature_2m === 'number')
+    bits.push(Math.round(weatherCache.current.temperature_2m) + '°');
+  const meals = data.mealPlan[dateKey(now)] || [];
+  const tonight = meals.length ? data.recipes.find(r => r.id === meals[0].recipeId) : null;
+  if (tonight) bits.push('Tonight: ' + tonight.name);
+  document.getElementById('fmaLine').textContent = bits.join('  ·  ');
+}
+
+// Animated SVG weather icon keyed to a WMO code. px = pixel size.
+function fridgeWeatherIcon(code, px) {
+  const cat = (code === 0 || code === 1) ? 'sun'
+    : (code === 2) ? 'partly'
+    : (code >= 71 && code <= 77) ? 'snow'
+    : ((code >= 51 && code <= 67) || (code >= 80 && code <= 82)) ? 'rain'
+    : (code >= 95) ? 'storm'
+    : 'cloud';
+  const s = `width:${px}px;height:${px}px`;
+  const cloud = (fill) => `<g fill="${fill}"><circle cx="24" cy="39" r="10"/><circle cx="38" cy="35" r="13"/><circle cx="47" cy="41" r="9"/><rect x="20" y="39" width="31" height="12" rx="6"/></g>`;
+  const rays = `<g class="wi-spin"><g stroke="#f0a83c" stroke-width="3.5" stroke-linecap="round"><line x1="32" y1="3" x2="32" y2="13"/><line x1="32" y1="51" x2="32" y2="61"/><line x1="3" y1="32" x2="13" y2="32"/><line x1="51" y1="32" x2="61" y2="32"/><line x1="11" y1="11" x2="18" y2="18"/><line x1="46" y1="46" x2="53" y2="53"/><line x1="53" y1="11" x2="46" y2="18"/><line x1="11" y1="53" x2="18" y2="46"/></g></g>`;
+  let inner;
+  if (cat === 'sun') {
+    inner = `${rays}<circle cx="32" cy="32" r="13" fill="#f5b942"/>`;
+  } else if (cat === 'partly') {
+    inner = `<circle cx="23" cy="24" r="9" fill="#f5b942"/><g class="wi-drift">${cloud('#a99c88')}</g>`;
+  } else if (cat === 'rain') {
+    inner = `<g class="wi-drift">${cloud('#9aa6b0')}</g><g fill="#6fa8d4"><circle class="wi-fall" cx="28" cy="54" r="2.6"/><circle class="wi-fall" style="animation-delay:.5s" cx="38" cy="54" r="2.6"/><circle class="wi-fall" style="animation-delay:1s" cx="48" cy="54" r="2.6"/></g>`;
+  } else if (cat === 'snow') {
+    inner = `<g class="wi-drift">${cloud('#aebcc7')}</g><g fill="#cfe3f0"><circle class="wi-fall" style="animation-duration:2.4s" cx="28" cy="54" r="3"/><circle class="wi-fall" style="animation-duration:2.4s;animation-delay:.8s" cx="38" cy="54" r="3"/><circle class="wi-fall" style="animation-duration:2.4s;animation-delay:1.6s" cx="48" cy="54" r="3"/></g>`;
+  } else if (cat === 'storm') {
+    inner = `<g class="wi-drift">${cloud('#8b95a0')}</g><polygon class="wi-flash" points="35,45 27,57 33,57 30,64 43,51 36,51 40,45" fill="#f3c33b"/>`;
+  } else {
+    inner = `<g class="wi-drift">${cloud('#a99c88')}</g><g class="wi-drift" style="animation-delay:1.2s" opacity="0.5">${cloud('#bcb1a0')}</g>`;
+  }
+  return `<svg class="wi" viewBox="0 0 64 64" style="${s}" aria-hidden="true">${inner}</svg>`;
+}
+
+function fmGreeting(h) {
+  return h < 5 ? 'Good night' : h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : h < 21 ? 'Good evening' : 'Good night';
+}
+
+// Cook duration: explicit cookMinutes wins; otherwise sum timers detected in the steps.
+function estimateCookMinutes(r) {
+  if (!r) return null;
+  const explicit = parseInt(r.cookMinutes, 10);
+  if (explicit > 0) return explicit;
+  let total = 0;
+  parseCookSteps(r).forEach(s => { const t = detectTimer(s); if (t) total += Math.round(t.seconds / 60); });
+  return total > 0 ? total : null;
+}
+function getDinnerTime() { return localStorage.getItem('dinner_time') || '18:00'; }
+
+// Decide whether a recipe wants the oven or sous vide. Honors a manual override
+// (r.appliance: auto|oven|sousvide|none), otherwise parses the steps.
+function detectAppliance(r) {
+  if (!r) return null;
+  const override = r.appliance || 'auto';
+  if (override === 'none') return null;
+  const notes = (r.notes || '') + ' ' + (r.name || '');
+  // Pull a temperature: "425°F" / "425 F" / "220C" / "350 degrees" / "350°"
+  const fM = notes.match(/(\d{2,3})\s*°?\s*f\b/i);
+  const cM = notes.match(/(\d{2,3})\s*°?\s*c\b/i);
+  const degM = notes.match(/(\d{3})\s*(?:°(?!\s*c)|degrees?\b)/i); // unitless degrees → assume °F
+  let tempF = fM ? parseInt(fM[1], 10) : (cM ? cToF(parseInt(cM[1], 10)) : (degM ? parseInt(degM[1], 10) : null));
+  const t = detectTimer(notes);
+  const mins = t ? Math.round(t.seconds / 60) : 0;
+  const svCue = /\b(sous\s*vide|water\s*bath|immersion\s*circulator)\b/i.test(notes);
+  const ovenCue = /\b(oven|roast|roasted|bake|baked|baking|broil|preheat|sheet\s*pan|°\s*f|°\s*c)\b/i.test(notes) || tempF != null;
+
+  if (override === 'sousvide' || (override === 'auto' && svCue))
+    return { type: 'sousvide', accessory: 'APC', tempF: tempF && tempF <= 210 ? tempF : 135, mins };
+  if (override === 'oven' || (override === 'auto' && ovenCue))
+    return { type: 'oven', accessory: 'APO', mode: 'dry', tempF: tempF || 375, mins };
+  return null;
+}
+function saveFridgeSettings() {
+  const dt = document.getElementById('dinnerTime').value;
+  const ft = document.getElementById('factReadTime').value;
+  const fv = document.getElementById('factVoice') ? document.getElementById('factVoice').value : '';
+  const cloudEl = document.getElementById('ttsCloud');
+  const ttsVoiceEl = document.getElementById('ttsVoice');
+  if (dt) localStorage.setItem('dinner_time', dt); else localStorage.removeItem('dinner_time');
+  if (ft) localStorage.setItem('fact_readaloud_time', ft); else localStorage.removeItem('fact_readaloud_time');
+  const sv = document.getElementById('fmSaverMins');
+  if (sv) localStorage.setItem('fm_saver_mins', sv.value);
+  if (fv) localStorage.setItem('fact_voice', fv); else localStorage.removeItem('fact_voice');
+  if (cloudEl) { if (cloudEl.checked) localStorage.setItem('tts_cloud', '1'); else localStorage.removeItem('tts_cloud'); }
+  if (ttsVoiceEl && ttsVoiceEl.value) localStorage.setItem('tts_voice', ttsVoiceEl.value);
+  toast('Kitchen display updated');
+}
+function loadFridgeSettings() {
+  const d = document.getElementById('dinnerTime'); if (d) d.value = getDinnerTime();
+  const f = document.getElementById('factReadTime'); if (f) f.value = localStorage.getItem('fact_readaloud_time') || '';
+  const sv = document.getElementById('fmSaverMins'); if (sv) sv.value = localStorage.getItem('fm_saver_mins') || '5';
+  const cloudEl = document.getElementById('ttsCloud'); if (cloudEl) cloudEl.checked = ttsCloudEnabled();
+  const ttsVoiceEl = document.getElementById('ttsVoice'); if (ttsVoiceEl) ttsVoiceEl.value = getTtsVoice();
+  populateVoicePicker();
+}
+// Pick the best available speech voice (saved choice, else best-quality en voice)
+function pickVoice() {
+  if (!('speechSynthesis' in window)) return null;
+  const voices = speechSynthesis.getVoices() || [];
+  const saved = localStorage.getItem('fact_voice');
+  if (saved) { const v = voices.find(x => x.name === saved); if (v) return v; }
+  const en = voices.filter(v => /^en[-_]?/i.test(v.lang));
+  // Prefer known natural/enhanced voices; these sound far better than the default
+  const prefer = [/siri/i, /\(enhanced\)/i, /\(premium\)/i, /neural/i, /natural/i, /samantha/i, /ava/i, /allison/i, /nicky/i, /aaron/i, /evan/i, /joelle/i, /google us english/i];
+  for (const re of prefer) { const v = en.find(x => re.test(x.name)); if (v) return v; }
+  // Otherwise avoid the old novelty/robotic voices
+  const good = en.find(v => !/fred|albert|zarvox|bad news|bahh|bells|boing|jester|organ|trinoids|whisper|wobble|cellos|good news/i.test(v.name));
+  return good || en[0] || voices[0] || null;
+}
+function getTtsVoice() { return localStorage.getItem('tts_voice') || 'en-US-Neural2-F'; }
+function ttsCloudEnabled() { return localStorage.getItem('tts_cloud') === '1'; }
+// OS (Web Speech) fallback voice
+function speakOS(text, intro) {
+  try {
+    if (!('speechSynthesis' in window) || !text) return;
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance((intro ? intro + ' ' : '') + text);
+    const v = pickVoice(); if (v) { u.voice = v; u.lang = v.lang; }
+    u.rate = 0.96; u.pitch = 1.05;
+    speechSynthesis.speak(u);
+  } catch (e) {}
+}
+// Natural cloud voice via Google TTS (through the Worker); falls back to OS voice
+let _ttsAudio = null;
+async function speakCloud(text, intro) {
+  const full = (intro ? intro + ' ' : '') + text; if (!full) return;
+  try {
+    const res = await fetch(getProxyUrl() + '/tts', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: full, voice: getTtsVoice() }) });
+    const j = await res.json();
+    if (j.audioContent) {
+      try { if (_ttsAudio) _ttsAudio.pause(); } catch (e) {}
+      _ttsAudio = new Audio('data:audio/mp3;base64,' + j.audioContent);
+      _ttsAudio.play().catch(() => speakOS(text, intro));
+      return;
+    }
+  } catch (e) {}
+  speakOS(text, intro);
+}
+function speakFact(text, intro) { if (ttsCloudEnabled()) speakCloud(text, intro); else speakOS(text, intro); }
+function testFactVoice() { speakFact('Did you know? Honey never spoils.', ''); }
+function populateVoicePicker() {
+  const sel = document.getElementById('factVoice'); if (!sel || !('speechSynthesis' in window)) return;
+  const voices = (speechSynthesis.getVoices() || []).filter(v => /^en[-_]?/i.test(v.lang));
+  const saved = localStorage.getItem('fact_voice') || '';
+  sel.innerHTML = '<option value="">Auto (best available)</option>' +
+    voices.map(v => `<option value="${esc(v.name)}" ${v.name === saved ? 'selected' : ''}>${esc(v.name)}${v.localService ? '' : ' (online)'}</option>`).join('');
+}
+if ('speechSynthesis' in window) { try { speechSynthesis.onvoiceschanged = populateVoicePicker; speechSynthesis.getVoices(); } catch (e) {} }
+// Returns {start, dinner} Date objects for today, or null if cook time unknown.
+function recommendedStart(cookMin) {
+  if (!cookMin) return null;
+  const [hh, mm] = getDinnerTime().split(':').map(Number);
+  const dinner = new Date(); dinner.setHours(hh, mm, 0, 0);
+  return { start: new Date(dinner.getTime() - cookMin * 60000), dinner };
+}
+function fmtTime(d) { return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }); }
+
+function fmBackground(h) {
+  if (h >= 5 && h < 11) return 'radial-gradient(120% 80% at 82% -10%, #fde7cf 0%, #faf3e6 52%, #f5e8d4 100%)';
+  if (h >= 11 && h < 17) return 'radial-gradient(120% 80% at 82% -10%, #fdf6e9 0%, #faf6ef 60%, #f3ecdf 100%)';
+  if (h >= 17 && h < 21) return 'radial-gradient(120% 80% at 82% -10%, #f8ddc4 0%, #f3e3d2 52%, #ecd8c4 100%)';
+  return 'radial-gradient(120% 80% at 82% -10%, #ece1cf 0%, #e8ddcb 52%, #ded1bb 100%)';
+}
+
+function renderFridgeClock() {
+  const now = new Date();
+  const h = now.getHours();
+  document.getElementById('fmGreeting').textContent = fmGreeting(h);
+  document.getElementById('fmClock').textContent = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  document.getElementById('fmDate').textContent = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+  document.getElementById('fridgeMode').style.background = fmBackground(h);
+  renderAmbientClock();
+  maybeReadFactAloud(now);
+}
+
+// Daily ritual: read the fact aloud once, at the configured time, while the display is open
+let _lastSpokenDate = '';
+function maybeReadFactAloud(now) {
+  const t = localStorage.getItem('fact_readaloud_time'); if (!t) return;
+  const [hh, mm] = t.split(':').map(Number);
+  const todayKey = dateKey(now);
+  if (now.getHours() === hh && now.getMinutes() === mm && _lastSpokenDate !== todayKey && _fridgeFactText) {
+    _lastSpokenDate = todayKey;
+    const names = (data.children || []).filter(c => c.name).map(c => c.name).join(' and ');
+    speakFact(_fridgeFactText, names ? `Good morning ${names}! Did you know...` : 'Did you know...');
+  }
+}
+
+// --- Card rotation state ---
+let _fmRotIdx = 0, _fmAnimateNext = false;
+function rotateFridgeCards() {
+  if (document.hidden) return;
+  if (document.getElementById('fmAmbient').classList.contains('open')) return;
+  if (!document.getElementById('fridgeMode').classList.contains('open')) return;
+  const gIn = document.getElementById('fmGroceryInput');
+  if (gIn && (gIn.value || document.activeElement === gIn)) return; // don't yank a half-typed item away
+  _fmRotIdx = (_fmRotIdx + 1) % 3;
+  _fmAnimateNext = true;
+  renderFridgeMode();
+}
+
+function renderFridgeMode() {
+  renderFridgeClock();
+  const todayKey = dateKey(new Date());
+
+  // Tonight's dinner
+  const meals = data.mealPlan[todayKey] || [];
+  const tonight = meals.length ? data.recipes.find(r => r.id === meals[0].recipeId) : null;
+
+  // Today's calendar events
+  const todays = (gcalEvents || []).filter(ev => (ev.start || '').substring(0, 10) === todayKey)
+    .sort((a, b) => (a.start > b.start ? 1 : -1))
+    .slice(0, 6);
+  const evHtml = todays.length
+    ? todays.map(ev => {
+        const time = ev.allDay ? 'All day' : new Date(ev.start).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+        const dot = (gcalSelectedIds.length > 1) ? '<span class="cal-dot" style="background:' + esc(ev.calColor || 'var(--blue)') + ';"></span>' : '';
+        return `<div>${dot}<strong>${esc(time)}</strong> ${esc(ev.title)}</div>`;
+      }).join('')
+    : '<div style="color:var(--text-secondary);">Nothing scheduled 🎈</div>';
+
+  // Weather — hero (today) + forecast strip with animated icons
+  let heroHtml = '<div class="fm-wh-cond">No forecast yet</div>';
+  let fcHtml = '';
+  if (weatherCache && weatherCache.daily) {
+    const wd = weatherCache.daily;
+    const start = Math.max(0, wd.time.indexOf(todayKey));
+    const cur = weatherCache.current;
+    const code = (cur && typeof cur.weather_code === 'number') ? cur.weather_code : wd.weathercode[start];
+    const nowTemp = (cur && typeof cur.temperature_2m === 'number') ? Math.round(cur.temperature_2m) : Math.round(wd.temperature_2m_max[start]);
+    const rain = wd.precipitation_probability_max ? wd.precipitation_probability_max[start] : 0;
+    heroHtml = `${fridgeWeatherIcon(code, 96)}
+      <div>
+        <div class="fm-wh-temp">${nowTemp}°<span style="font-size:18px;color:var(--text-secondary);"> now</span></div>
+        <div class="fm-wh-cond">${esc(WMO_LABELS[code] || '')}${rain > 30 ? ' · ' + rain + '% rain' : ''}</div>
+        <div class="fm-wh-hl">High ${Math.round(wd.temperature_2m_max[start])}° · Low ${Math.round(wd.temperature_2m_min[start])}°</div>
+      </div>`;
+    for (let i = start + 1; i < Math.min(start + 6, wd.time.length); i++) {
+      const d = new Date(wd.time[i] + 'T12:00:00');
+      fcHtml += `<div class="fm-fc">
+        <div class="fm-fc-day">${SHORT_DAYS[d.getDay()]}</div>
+        <div style="display:flex;justify-content:center;margin:8px 0;">${fridgeWeatherIcon(wd.weathercode[i], 44)}</div>
+        <div class="fm-fc-hl">${Math.round(wd.temperature_2m_max[i])}° <span class="fm-fc-lo">${Math.round(wd.temperature_2m_min[i])}°</span></div>
+      </div>`;
+    }
+  }
+  document.getElementById('fmWeatherHero').innerHTML = heroHtml;
+  document.getElementById('fmForecast').innerHTML = fcHtml;
+
+  // Preserve a half-typed grocery item across the periodic rebuild
+  const gIn = document.getElementById('fmGroceryInput');
+  const gVal = gIn ? gIn.value : '';
+  const gFocused = gIn && document.activeElement === gIn;
+
+  // Tonight's dinner — reflect cooking, DoorDash, or eating out
+  const todayDD = (data.doordash || { orders: [] }).orders.find(o => o.date === todayKey);
+  let dinnerLabel = "Tonight's dinner", dinnerInner;
+  if (todayDD && todayDD.mode === 'eatingout') {
+    dinnerLabel = "Tonight — Eating out";
+    dinnerInner = `<div class="fm-dish">🍽️ ${todayDD.restaurant ? esc(todayDD.restaurant) : 'Eating out'}</div>${todayDD.items ? '<div class="fm-dish-sub">' + esc(todayDD.items) + '</div>' : ''}`;
+  } else if (todayDD) {
+    dinnerLabel = "Tonight — DoorDash";
+    const cost = todayDD.cost ? ' · $' + Number(todayDD.cost).toFixed(2) : '';
+    dinnerInner = `<div class="fm-dish">🛵 ${todayDD.restaurant ? esc(todayDD.restaurant) : 'DoorDash night'}</div>
+       ${(todayDD.items || todayDD.cost) ? '<div class="fm-dish-sub">' + esc(todayDD.items || '') + cost + '</div>' : ''}
+       <button class="fm-cook-btn" style="background:#ff3008;" onclick="openDoorDash('${todayDD.restaurant ? esc(todayDD.restaurant).replace(/'/g,"\\'") : ''}')">🛵 Open DoorDash</button>`;
+  } else {
+    const cookMin = estimateCookMinutes(tonight);
+    let metaLine = '';
+    if (tonight && cookMin) {
+      const rec = recommendedStart(cookMin);
+      const now = new Date();
+      if (now < rec.start) metaLine = `Start by <strong>${fmtTime(rec.start)}</strong> to eat at ${fmtTime(rec.dinner)}`;
+      else if (now < rec.dinner) metaLine = `Start soon to eat by ${fmtTime(rec.dinner)}`;
+    }
+    const subBits = [];
+    if (tonight && tonight.cuisine) subBits.push(esc(tonight.cuisine));
+    if (cookMin) subBits.push('⏱ ' + cookMin + ' min');
+    dinnerInner = tonight
+      ? `<div class="fm-dish">${esc(tonight.name)}</div>
+         ${subBits.length ? '<div class="fm-dish-sub">' + subBits.join(' · ') + '</div>' : ''}
+         ${metaLine ? '<div class="fm-dish-meta">' + metaLine + '</div>' : ''}
+         <button class="fm-cook-btn" onclick="openCookMode('${tonight.id}')">👨‍🍳 Start cooking</button>`
+      : `<div class="fm-dish">Not planned yet</div><div class="fm-dish-sub">Open the app to pick something</div>`;
+  }
+
+  // This week — the next few dinners, so the plan is glanceable from the counter
+  let weekHtml = '';
+  for (let i = 1; i <= 4; i++) {
+    const d = new Date(); d.setDate(d.getDate() + i);
+    const k = dateKey(d);
+    const dayMeals = data.mealPlan[k] || [];
+    const rec = dayMeals.length ? data.recipes.find(r => r.id === dayMeals[0].recipeId) : null;
+    const dd = (data.doordash || { orders: [] }).orders.find(o => o.date === k);
+    const dish = dd
+      ? (dd.mode === 'eatingout' ? '🍽️ ' : '🛵 ') + (dd.restaurant || (dd.mode === 'eatingout' ? 'Eating out' : 'DoorDash'))
+      : (rec ? rec.name : '—');
+    weekHtml += `<div class="fm-week-row"><span class="fm-week-day">${SHORT_DAYS[d.getDay()]}</span><span class="fm-week-dish">${esc(dish)}</span></div>`;
+  }
+
+  // Right column rotates through a pool of cards (two visible at a time) so the
+  // layout keeps gently changing — nothing sits on the same pixels for hours.
+  const anim = _fmAnimateNext ? ' fm-card-in' : '';
+  _fmAnimateNext = false;
+  const pool = [
+    `<div class="fm-card${anim}"><h4>Today</h4><div class="fm-list">${evHtml}</div></div>`,
+    `<div class="fm-card${anim}"><h4>Add to grocery</h4>
+      <div class="fm-add-row">
+        <input id="fmGroceryInput" placeholder="We're out of…" enterkeyhint="done" onkeydown="if(event.key==='Enter'){fridgeAddItem();}">
+        <button class="fm-add-go" onclick="fridgeAddItem()">Add</button>
+      </div>
+      <div class="fm-grocery-recent" id="fmGroceryRecent"></div>
+    </div>`,
+    `<div class="fm-card${anim}"><h4>This week</h4><div style="margin-top:2px;">${weekHtml}</div></div>`,
+  ];
+  const a = _fmRotIdx % pool.length, b = (_fmRotIdx + 1) % pool.length;
+  document.getElementById('fmGrid').innerHTML = `
+    <div class="fm-card fm-dinner"><h4>${dinnerLabel}</h4>${dinnerInner}</div>
+    ${pool[a]}
+    ${pool[b]}`;
+
+  // restore the in-progress item and the just-added confirmation
+  if (gVal || gFocused) { const n = document.getElementById('fmGroceryInput'); if (n) { n.value = gVal; if (gFocused) n.focus(); } }
+  renderFridgeGroceryRecent();
+  refreshFridgeFact();
+  renderFridgeSonosRow();
+}
+
+// Quick-add to the grocery list from the kitchen display, with calm feedback
+let _fmRecentAdds = [];
+function fridgeAddItem() {
+  const el = document.getElementById('fmGroceryInput'); if (!el) return;
+  const name = (el.value || '').trim(); if (!name) return;
+  if (!data.groceryExtras) data.groceryExtras = [];
+  if (!data.groceryExtras.find(x => x.name.toLowerCase() === name.toLowerCase())) {
+    data.groceryExtras.push({ name, category: 'Other' });
+    persist();
+  }
+  el.value = '';
+  _fmRecentAdds = [name, ..._fmRecentAdds.filter(n => n.toLowerCase() !== name.toLowerCase())].slice(0, 4);
+  renderFridgeGroceryRecent();
+  el.focus();
+}
+function renderFridgeGroceryRecent() {
+  const el = document.getElementById('fmGroceryRecent'); if (!el) return;
+  el.innerHTML = _fmRecentAdds.length
+    ? `<span class="fm-added-label">Added</span> ${_fmRecentAdds.map(n => `<span class="fm-chip">${esc(n)}</span>`).join('')}`
+    : `<span class="fm-hint">Add anything you're running low on — it syncs to your phone.</span>`;
+}
+
+// A daily "did you know" for the kids — AI-generated with a synced no-repeat
+// memory, backed by a 200-fact offline pool that also never repeats.
+const FRIDGE_FALLBACK_FACTS = [
+  "The Sun is so big that about one million Earths could fit inside it.",
+  "One day on Venus lasts longer than its whole year.",
+  "Footprints left on the Moon will stay for millions of years, because there is no wind to blow them away.",
+  "Saturn is so light for its size that it would float in a giant bathtub of water.",
+  "On Mars, sunsets look blue.",
+  "Jupiter's Great Red Spot is a storm bigger than the whole Earth that has raged for hundreds of years.",
+  "Space is completely silent, because there is no air to carry sound.",
+  "The International Space Station circles the whole Earth about every 90 minutes.",
+  "Astronauts grow a little taller in space because their spines stretch out.",
+  "There are more stars in the universe than grains of sand on all of Earth's beaches.",
+  "Uranus rolls around the Sun on its side, like a ball.",
+  "Light from the Sun takes about eight minutes to reach your eyes.",
+  "Mercury and Venus are the only planets with no moons at all.",
+  "The Moon is slowly drifting away from Earth, about as fast as your fingernails grow.",
+  "Olympus Mons on Mars is the biggest volcano we know, almost three times taller than Mount Everest.",
+  "Scientists think it might rain diamonds deep inside Neptune.",
+  "A year on Neptune lasts about 165 Earth years.",
+  "The Sun is a star, just much closer to us than all the others.",
+  "A teaspoon of a neutron star would weigh about as much as a mountain.",
+  "Some stars spin hundreds of times every second.",
+  "The blue whale is the largest animal that has ever lived, bigger than any dinosaur.",
+  "A blue whale's heart is about the size of a small car.",
+  "Sea otters hold hands while they sleep so they don't drift apart.",
+  "Starfish have no brain and no blood, and can regrow a lost arm.",
+  "Jellyfish have been on Earth longer than dinosaurs.",
+  "The ocean holds about 97 percent of all the water on Earth.",
+  "Dolphins sleep with one half of their brain at a time, keeping one eye open.",
+  "Some parrotfish sleep in a bubble of their own slime.",
+  "Seahorses are the only animals where the dads carry the babies.",
+  "The deepest part of the ocean is deeper than Mount Everest is tall.",
+  "Coral reefs are built by tiny animals smaller than your fingernail.",
+  "An octopus can squeeze through any hole bigger than its beak.",
+  "Pistol shrimp snap their claws so fast it makes a flash of light and a sound louder than a rock concert.",
+  "Whale songs can travel hundreds of miles underwater.",
+  "Some penguins can't fly in the air, but they zoom underwater at 20 miles per hour.",
+  "Sea turtles swim thousands of miles and still find the beach where they hatched.",
+  "Lobsters taste with their legs.",
+  "Electric eels can make enough electricity to light up a Christmas tree.",
+  "Sharks have been around longer than trees.",
+  "Flying fish can glide above the waves longer than a football field.",
+  "A cheetah can go from standing still to highway speed in about three seconds.",
+  "Elephants can't jump.",
+  "A giraffe's tongue is about as long as your arm, and it's blue-purple.",
+  "Kangaroos can't walk backwards.",
+  "Ants can lift things many times heavier than their own bodies.",
+  "A snail can sleep for up to three years.",
+  "Cows have best friends and get lonely without them.",
+  "Butterflies taste with their feet.",
+  "An ostrich's eye is bigger than its brain.",
+  "Bats are the only mammals that can truly fly.",
+  "A hummingbird can fly backwards and even upside down.",
+  "Owls can turn their heads almost all the way around, but they can't move their eyes.",
+  "Polar bear skin is black under all that white fur.",
+  "Zebra stripes are like fingerprints, no two zebras match.",
+  "A woodpecker can peck about 20 times every second.",
+  "Dogs' noses are wet to help them catch smells out of the air.",
+  "Cats spend about two-thirds of their lives asleep.",
+  "Fireflies flash in patterns to talk to each other.",
+  "A grasshopper can jump 20 times the length of its own body.",
+  "Sloths move so slowly that green algae grows on their fur.",
+  "Your heart beats about 100,000 times every single day.",
+  "Grown-ups have 206 bones, but babies are born with about 300.",
+  "The smallest bone in your body is in your ear, smaller than a grain of rice.",
+  "You blink about 15,000 times a day.",
+  "Your fingernails grow about four times faster than your toenails.",
+  "Goosebumps are your body trying to fluff up fur you don't have anymore.",
+  "Your brain uses about a fifth of all your body's energy.",
+  "Kids have more taste buds than grown-ups do.",
+  "Your stomach gets a brand-new slimy lining every few days so it doesn't digest itself.",
+  "For its size, the strongest muscle in your body is in your jaw.",
+  "You are about half an inch taller in the morning than at night.",
+  "Everyone has a totally unique tongue print, just like fingerprints.",
+  "Your ears and nose keep growing your whole life.",
+  "Bone is about five times stronger than a piece of steel the same weight.",
+  "Your body makes about a liter of spit every day.",
+  "Hiccups happen when the muscle that helps you breathe gets the jitters.",
+  "Your blood makes a full trip around your body in about one minute.",
+  "The little half-moons on your fingernails are called lunulae, which means little moons.",
+  "Humans glow very faintly in the dark, just too dim for our eyes to see.",
+  "Your left lung is a little smaller than your right, to leave room for your heart.",
+  "Popcorn pops because a tiny drop of water inside each kernel turns to steam and bursts out.",
+  "Apples float in water because they are about one-quarter air.",
+  "Peanuts aren't nuts at all, they grow underground like beans.",
+  "Tomatoes are fruits, and so are cucumbers, pumpkins, and green beans.",
+  "Chocolate was once so precious that people used cocoa beans as money.",
+  "Carrots are full of vitamin A, which really does help your eyes.",
+  "Ketchup was once sold as medicine.",
+  "An ear of corn almost always has an even number of rows.",
+  "Ripe cranberries bounce like little rubber balls.",
+  "Onions make you cry because they puff out a gas that tickles your eyes.",
+  "White chocolate isn't really chocolate, it has no cocoa solids in it.",
+  "Broccoli, cauliflower, kale, and cabbage are all the same plant, shaped by farmers over time.",
+  "A pineapple takes about two years to grow.",
+  "Bread rises because yeast burps tiny bubbles of gas into the dough.",
+  "People were making cheese before anyone invented writing.",
+  "Watermelons are about 92 percent water.",
+  "Pasta comes in more than 300 shapes, with names like little ears and butterflies.",
+  "Rice feeds more people around the world than any other food.",
+  "Baking soda makes pancakes fluffy by filling them with tiny air bubbles.",
+  "Salt is the only rock that people eat.",
+  "No two snowflakes are exactly alike, but every one has six sides.",
+  "Thunder is the sound of lightning heating the air so fast it booms.",
+  "Count the seconds between a lightning flash and its boom: five seconds is about a mile away.",
+  "Rainbows are full circles, we usually only see the top half from the ground.",
+  "The wind doesn't make a sound until it bumps into something.",
+  "A big fluffy cloud can weigh as much as a hundred elephants.",
+  "Lightning strikes the Earth about 100 times every second.",
+  "The hottest place on Earth, Death Valley, is right here in California.",
+  "The center of the Earth is about as hot as the surface of the Sun.",
+  "Antarctica is the biggest desert on Earth, deserts just need to be dry, not hot.",
+  "Hailstones can grow as big as grapefruits.",
+  "A rainbow made by moonlight is called a moonbow.",
+  "A big tree can drink a whole bathtub of water in one day.",
+  "Mount Everest grows a tiny bit taller every year.",
+  "Rivers wiggle because water always looks for the easiest path downhill.",
+  "Fog is just a cloud resting on the ground.",
+  "The Amazon rainforest makes so much of its own rain that clouds form over it every day.",
+  "Lava from a volcano can be five times hotter than a kitchen oven.",
+  "Ocean waves are made by wind pushing on the water.",
+  "Dew drops are bits of the air's water that settle down when the night turns cool.",
+  "The first airplane flight lasted just 12 seconds.",
+  "Bubble wrap was invented to be wallpaper before anyone popped it for fun.",
+  "The teddy bear is named after a real president, Theodore Teddy Roosevelt.",
+  "Velcro was invented after a scientist studied the burrs stuck to his dog's fur.",
+  "The first computers were so big they filled a whole room.",
+  "Popsicles were invented by accident by an 11-year-old who left his drink outside on a cold night.",
+  "The first cars had no steering wheels, drivers steered with a stick like a boat.",
+  "Long ago, a person had to walk in front of every train waving a red flag.",
+  "The zipper was invented decades before anyone put it on clothes.",
+  "An astronaut's space suit costs millions of dollars.",
+  "The first message sent over the internet was just two letters, L and O, then the computer crashed.",
+  "Pencils can write upside down and even underwater, but most pens can't.",
+  "Elevators became one of the safest ways to travel thanks to a special brake invented in 1852.",
+  "Roller coasters were partly inspired by giant ice slides in Russia.",
+  "LEGO bricks made today still snap onto bricks made in 1958.",
+  "There are more LEGO minifigures in the world than there are people.",
+  "Alexander Graham Bell made the very first phone call in 1876, to his helper in the next room.",
+  "Paper was invented in China about 2,000 years ago.",
+  "Submarines dive and rise by filling and emptying big tanks of water.",
+  "The Wright brothers, who built the first airplane, started out fixing bicycles.",
+  "The T. rex had teeth as long as bananas.",
+  "Some dinosaurs were as small as chickens.",
+  "Birds are living dinosaurs, a chickadee and a T. rex are distant cousins.",
+  "Stegosaurus had a brain the size of a walnut in a body as big as a van.",
+  "Dinosaur fossils have been found on every continent, even Antarctica.",
+  "The longest dinosaur necks stretched longer than a school bus.",
+  "Woolly mammoths were still alive while the pyramids were being built.",
+  "Some dinosaurs swallowed stones to help grind up food in their bellies.",
+  "The word dinosaur means terribly great lizard.",
+  "Velociraptors were about the size of a turkey, and probably had feathers.",
+  "Before the dinosaurs, there were dragonflies with wings as wide as a hawk's.",
+  "Fossilized dinosaur poop is called coprolite, and scientists love finding it.",
+  "Dinosaurs lived on Earth hundreds of times longer than humans have so far.",
+  "Some dinosaur eggs were as big as basketballs.",
+  "Pterodactyls weren't dinosaurs, they were flying reptile cousins.",
+  "The ancient ancestors of whales walked on land on four legs.",
+  "Saber-toothed cats had teeth as long as butter knives.",
+  "Ammonites, spiral seashells older than the dinosaurs, can still be found as fossils today.",
+  "Triceratops' huge neck frill may have helped it look big and stay cool.",
+  "Crocodiles watched the dinosaurs come and go, and they're still here.",
+  "Bamboo can grow three feet in a single day.",
+  "The biggest living thing on Earth is a giant fungus in Oregon, bigger than 1,000 soccer fields.",
+  "A sunflower is really thousands of tiny flowers packed together.",
+  "Trees talk to each other underground through webs of fungus on their roots.",
+  "The oldest known tree is a bristlecone pine in California, almost 5,000 years old.",
+  "A saguaro cactus swells up like a sponge when it rains.",
+  "California's redwood trees grow taller than a 30-story building.",
+  "Venus flytraps can count, they only snap shut when a bug touches two of their hairs.",
+  "Apples, pears, plums, and cherries are all cousins of the rose.",
+  "Some seeds can sleep for hundreds of years and still sprout.",
+  "That fresh-cut-grass smell is actually the grass sending out a message.",
+  "A single big oak tree can drop 10,000 acorns in one year.",
+  "Dandelion seeds can ride the wind for miles like tiny parachutes.",
+  "Strawberries wear their seeds on the outside, about 200 of them each.",
+  "Maple syrup is just tree sap, boiled down until it's sweet.",
+  "Coconuts can float across whole oceans and sprout on faraway beaches.",
+  "Moss grows thickest on the shady side of a tree.",
+  "Champion giant pumpkins can gain 30 pounds in a single day.",
+  "About half the oxygen you breathe comes from tiny plants in the ocean.",
+  "A tree stump shows one ring for every year the tree lived.",
+  "The letter E is the most used letter in English.",
+  "A jiffy is a real unit of time, a tiny fraction of a second.",
+  "Eleven plus two and twelve plus one use exactly the same letters, and equal the same number.",
+  "The dot over the letters i and j is called a tittle.",
+  "A googol is a 1 with a hundred zeros after it, and Google is named after it.",
+  "Zero was invented long after the other numbers, people counted for ages without it.",
+  "The shortest complete sentence in English is Go!",
+  "A group of pandas is called an embarrassment.",
+  "The word smiles has a mile between its first and last letters.",
+  "Spell out any odd number and you'll find the letter E in it.",
+  "The hashtag symbol's fancy name is octothorpe.",
+  "A palindrome reads the same backwards, like racecar and mom.",
+  "The plastic tips on shoelaces are called aglets.",
+  "Rhythm is one of the longest common words with no A, E, I, O, or U.",
+  "Four is the only number spelled with the same number of letters as its value.",
+  "In the Middle Ages, a moment was a real measure of time, exactly 90 seconds.",
+  "A million seconds is about 11 days, but a billion seconds is about 32 years.",
+  "The English alphabet used to have extra letters, one was called thorn.",
+  "Q is the only letter that never appears in a U.S. state name.",
+  "A baker's dozen means 13, from bakers tossing in one extra to be safe."
+];
+let _factTriedDate = '';
+let _fridgeFactText = '';
+
+// --- No-repeat memory (synced via Firestore in data.factHistory) ---
+function _normFact(t) { return (t || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 90); }
+function factAlreadyUsed(text) { return (data.factHistory || []).some(f => f.k === _normFact(text)); }
+function markFactUsed(text) {
+  if (!text) return;
+  if (!data.factHistory) data.factHistory = [];
+  const k = _normFact(text);
+  if (data.factHistory.some(f => f.k === k)) return;
+  data.factHistory.push({ k, t: text, d: dateKey(new Date()) });
+  if (data.factHistory.length > 600) data.factHistory = data.factHistory.slice(-600);
+  persist();
+}
+function pickFallbackFact() {
+  const fresh = FRIDGE_FALLBACK_FACTS.filter(f => !factAlreadyUsed(f));
+  const pool = fresh.length ? fresh : FRIDGE_FALLBACK_FACTS; // whole pool heard — start over
+  const seed = parseInt(dateKey(new Date()).replace(/-/g, ''), 10);
+  return pool[seed % pool.length];
+}
+
+function showFridgeFact(text) {
+  const el = document.getElementById('fmFact'); if (!el) return;
+  _fridgeFactText = text;
+  const names = (data.children || []).filter(c => c.name).map(c => esc(c.name)).join(' & ') || 'the kids';
+  el.style.display = 'block';
+  el.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;">
+      <h4 style="margin:0;">\ud83d\udca1 For ${names}</h4>
+      <button class="fm-speak" onclick="speakFact(_fridgeFactText)" aria-label="Read aloud">\ud83d\udd0a Read aloud</button>
+    </div>
+    <div class="fm-fact-text" style="margin-top:6px;">${esc(text)}</div>`;
+}
+
+const FACT_TOPICS = ['space and planets', 'the ocean and sea creatures', 'animals and bugs', 'the human body', 'food and cooking science', 'weather and nature', 'machines and inventions', 'dinosaurs and long-ago creatures', 'plants and trees', 'words, numbers, and silly records'];
+
+async function refreshFridgeFact(force) {
+  const el = document.getElementById('fmFact'); if (!el) return;
+  const todayKey = dateKey(new Date());
+  let cached = null; try { cached = JSON.parse(localStorage.getItem('mp_fridge_fact') || 'null'); } catch (e) {}
+  if (!force && cached && cached.date === todayKey && cached.text) { showFridgeFact(cached.text); return; }
+  // Show a never-heard pool fact immediately so the bar is never empty
+  const fallback = pickFallbackFact();
+  showFridgeFact(fallback);
+  // Only attempt the AI fact once per day per session (avoid hammering on 5-min refresh)
+  if (!force && _factTriedDate === todayKey) return;
+  _factTriedDate = todayKey;
+  const lockIn = (text) => {
+    try { localStorage.setItem('mp_fridge_fact', JSON.stringify({ date: todayKey, text })); } catch (e) {}
+    markFactUsed(text);
+    showFridgeFact(text);
+  };
+  if (!getProxyUrl()) { lockIn(fallback); return; }
+  try {
+    const meals = data.mealPlan[todayKey] || [];
+    const tonight = meals.length ? data.recipes.find(r => r.id === meals[0].recipeId) : null;
+    const kids = (data.children || []).filter(c => c.name).map(c => {
+      const a = getChildAge(c.birthday); return c.name + (a != null ? ` (age ${Math.floor(a / 12)})` : '');
+    }).join(' and ');
+    const topic = FACT_TOPICS[(new Date().getDate() + new Date().getMonth() * 3) % FACT_TOPICS.length];
+    const avoid = (data.factHistory || []).slice(-80).map(f => '- ' + (f.t || f.k)).join('\n');
+    const buildPrompt = (extraAvoid) => `Give ONE delightful, TRUE, kid-friendly fact (1-2 short sentences) that ${kids || 'young kids'} would enjoy hearing read aloud at breakfast. Today's topic: ${topic}${tonight ? ` (or tie it to tonight's dinner, ${tonight.name}, if there's a natural fit)` : ''}. Warm and simple. No preamble, no quotation marks - just the fact.
+
+CRITICAL: it must be genuinely new. Do NOT repeat or closely paraphrase ANY of these facts they have already heard:
+${avoid || '(none yet)'}${extraAvoid ? '\n- ' + extraAvoid : ''}`;
+    let text = (await callClaude(buildPrompt(), { system: 'You write one short, true, delightful fact for young children. Output only the fact.', maxTokens: 150 }) || '').trim().replace(/^["']|["']$/g, '');
+    if (text && factAlreadyUsed(text)) {
+      // Claude repeated itself — one retry with the duplicate called out
+      text = (await callClaude(buildPrompt(text), { system: 'You write one short, true, delightful fact for young children. Output only the fact.', maxTokens: 150 }) || '').trim().replace(/^["']|["']$/g, '');
+    }
+    if (text && !factAlreadyUsed(text)) lockIn(text);
+    else lockIn(fallback);
+  } catch (e) { lockIn(fallback); }
+}
+
+// ===========================================================================
+// ANOVA SMART APPLIANCES (beta) — official WebSocket API
+// ===========================================================================
+let _anovaWS = null, _anovaDevices = {}, _anovaRaw = [], _anovaWant = false, _anovaReconnectT = null;
+
+function anovaUuid() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+  });
+}
+function setAnovaStatus(s) { ['anovaStatus', 'anovaModalStatus', 'fmAppStatus'].forEach(id => { const el = document.getElementById(id); if (el) el.textContent = s; }); }
+let _anovaTarget = 'anovaDevices';
+let _anovaPrefill = null;
+function fToC(f) { return Math.round(((f - 32) * 5 / 9) * 100) / 100; }
+function cToF(c) { return Math.round(c * 9 / 5 + 32); }
+
+function saveAnovaPat() {
+  const proxyEl = document.getElementById('anovaProxyUrl');
+  const proxy = normalizeAnovaProxy(proxyEl ? proxyEl.value : '');
+  if (proxyEl) proxyEl.value = proxy; // show the corrected wss:// URL
+  if (proxy) localStorage.setItem('anova_proxy_url', proxy); else localStorage.removeItem('anova_proxy_url');
+  const v = document.getElementById('anovaPat').value.trim();
+  if (v) localStorage.setItem('anova_pat', v); else localStorage.removeItem('anova_pat');
+  toast('Anova settings saved');
+  if (anovaConfigured()) anovaConnect();
+}
+function loadAnovaPat() {
+  const pEl = document.getElementById('anovaProxyUrl'); if (pEl) pEl.value = getAnovaProxy();
+  const el = document.getElementById('anovaPat'); if (el) el.value = getAnovaPat();
+  setAnovaStatus(getAnovaProxy() ? 'Worker proxy set. Open controls to connect.' : (getAnovaPat() ? 'Direct token set — consider the Worker proxy instead. Open controls to connect.' : 'No Worker URL or token yet.'));
+}
+
+function anovaConnect() {
+  const proxy = getAnovaProxy();
+  const pat = getAnovaPat();
+  let url;
+  if (proxy) {
+    // Worker proxy injects the token server-side — nothing secret in this URL
+    url = proxy;
+  } else if (pat) {
+    if (!pat.startsWith('anova-')) { setAnovaStatus('Token should start with "anova-".'); return; }
+    url = 'wss://devices.anovaculinary.io?token=' + encodeURIComponent(pat) + '&supportedAccessories=APC,APO';
+  } else {
+    setAnovaStatus('No Worker URL or token yet — see Settings → Smart Appliances.');
+    return;
+  }
+  _anovaWant = true;
+  try { if (_anovaWS) _anovaWS.close(); } catch (e) {}
+  setAnovaStatus('Connecting…');
+  let ws;
+  try { ws = new WebSocket(url); }
+  catch (e) { setAnovaStatus('Could not open connection.'); return; }
+  _anovaWS = ws;
+  ws.onopen = () => setAnovaStatus('Connected — discovering devices…');
+  ws.onmessage = (e) => handleAnovaMessage(e.data);
+  ws.onerror = () => setAnovaStatus(proxy ? 'Connection error — check the Worker URL and that devices are online.' : 'Connection error — check the token and that devices are online.');
+  ws.onclose = () => { setAnovaStatus('Disconnected.'); if (_anovaWant) { clearTimeout(_anovaReconnectT); _anovaReconnectT = setTimeout(anovaConnect, 8000); } };
+}
+function anovaDisconnect() { _anovaWant = false; clearTimeout(_anovaReconnectT); try { if (_anovaWS) _anovaWS.close(); } catch (e) {} }
+
+function handleAnovaMessage(raw) {
+  _anovaRaw.unshift('← ' + raw); if (_anovaRaw.length > 80) _anovaRaw.length = 80; renderAnovaRaw();
+  let msg; try { msg = JSON.parse(raw); } catch (e) { return; }
+  const cmd = msg.command || '';
+  if (cmd === 'EVENT_APC_WIFI_LIST') registerAnovaDevices(msg.payload, 'APC');
+  else if (cmd === 'EVENT_APO_WIFI_LIST') registerAnovaDevices(msg.payload, 'APO');
+  else updateAnovaState(msg);
+}
+function registerAnovaDevices(list, accessory) {
+  (list || []).forEach(d => {
+    const id = d.cookerId || d.id; if (!id) return;
+    if (!_anovaDevices[id]) _anovaNewDevice = true; // a device we haven't seen before
+    _anovaDevices[id] = Object.assign(_anovaDevices[id] || {}, {
+      id, name: d.name || (accessory === 'APO' ? 'Precision Oven' : 'Precision Cooker'), type: d.type || '', accessory
+    });
+  });
+  setAnovaStatus(Object.keys(_anovaDevices).length + ' device(s) connected.');
+  // Only rebuild the cards when the device set actually changed — repeated
+  // device-list messages must not nuke the controls you're using.
+  if (_anovaNewDevice) { _anovaNewDevice = false; renderAnovaDevices(); }
+}
+let _anovaNewDevice = false;
+// Live status shape isn't in the docs — find a "current" temperature defensively,
+// and keep the raw log so we can calibrate against the real device on first connect.
+function deepFindCurrentTemp(o) {
+  let found = null;
+  (function walk(x) {
+    if (found != null || !x || typeof x !== 'object') return;
+    for (const k in x) {
+      const v = x[k];
+      if (/current/i.test(k) && v && typeof v === 'object') {
+        if (typeof v.celsius === 'number') { found = v.celsius; return; }
+        if (v.temperature && typeof v.temperature.celsius === 'number') { found = v.temperature.celsius; return; }
+      }
+      if (v && typeof v === 'object') walk(v);
+    }
+  })(o);
+  return found;
+}
+// Exact current-temperature paths confirmed from real EVENT_APC_STATE / EVENT_APO_STATE
+function extractAnovaTemp(msg, dev) {
+  const st = msg.payload && msg.payload.state;
+  if (!st) return deepFindCurrentTemp(msg);
+  if (dev.accessory === 'APC') {
+    const ti = st['temperature-info'];
+    if (ti && typeof ti['water-temperature'] === 'number') return ti['water-temperature'];
+  } else {
+    const tb = st.nodes && st.nodes.temperatureBulbs;
+    if (tb) {
+      if (tb.dry && tb.dry.current && typeof tb.dry.current.celsius === 'number') return tb.dry.current.celsius;
+      if (tb.wet && tb.wet.current && typeof tb.wet.current.celsius === 'number') return tb.wet.current.celsius;
+    }
+  }
+  return deepFindCurrentTemp(msg);
+}
+function updateAnovaState(msg) {
+  const p = msg.payload || {};
+  const id = p.cookerId || p.id || msg.cookerId || (p.payload && (p.payload.cookerId || p.payload.id));
+  if (id && _anovaDevices[id]) {
+    _anovaDevices[id].last = msg;
+    const c = extractAnovaTemp(msg, _anovaDevices[id]);
+    // Update ONLY the live-temp text — never re-render the cards, or it would
+    // close open dropdowns and wipe inputs mid-interaction.
+    if (c != null) {
+      _anovaDevices[id].liveC = c;
+      const el = document.getElementById('anova-live-' + id);
+      if (el) el.innerHTML = cToF(c) + '°F <span style="font-size:13px;color:var(--text-secondary);">now</span>';
+    }
+  }
+}
+
+function renderAnovaDevices() {
+  // Render into whichever surface is active; clear the other so input ids stay unique
+  const other = _anovaTarget === 'anovaDevices' ? 'fmAppDevices' : 'anovaDevices';
+  const oEl = document.getElementById(other); if (oEl) oEl.innerHTML = '';
+  const el = document.getElementById(_anovaTarget); if (!el) return;
+  const ids = Object.keys(_anovaDevices);
+  if (!ids.length) { el.innerHTML = '<p style="font-size:15px;color:var(--text-secondary);">No devices yet. Connect with your token and make sure they\'re online in the Anova app.</p>'; return; }
+  el.innerHTML = ids.map(id => {
+    const d = _anovaDevices[id];
+    const live = `<div class="anova-live" id="anova-live-${id}">${d.liveC != null ? cToF(d.liveC) + '°F <span style="font-size:13px;color:var(--text-secondary);">now</span>' : ''}</div>`;
+    if (d.accessory === 'APC') {
+      return `<div class="anova-card"><div class="anova-head"><span class="anova-name">🍲 ${esc(d.name)}</span></div>${live}
+        <div class="anova-row"><label>Temp °F</label><input type="number" id="apc-temp-${id}" value="135" min="32" max="210"></div>
+        <div class="anova-row"><label>Timer min</label><input type="number" id="apc-timer-${id}" value="60" min="0"></div>
+        <div class="anova-btns"><button class="btn btn-primary" onclick="anovaStartCooker('${id}')">Start</button><button class="btn btn-secondary" onclick="anovaStopCooker('${id}')">Stop</button></div></div>`;
+    }
+    return `<div class="anova-card"><div class="anova-head"><span class="anova-name">🔥 ${esc(d.name)}</span></div>${live}
+      <div class="anova-row"><label>Mode</label><select id="apo-mode-${id}"><option value="dry">Roast (dry)</option><option value="wet">Sous vide (wet)</option></select></div>
+      <div class="anova-row"><label>Temp °F</label><input type="number" id="apo-temp-${id}" value="350" min="75" max="482"></div>
+      <div class="anova-row"><label>Steam</label><select id="apo-steam-${id}" onchange="document.getElementById('apo-steamval-'+'${id}').style.display=this.value==='off'?'none':'block'"><option value="off">No steam</option><option value="relative-humidity">Humidity %</option><option value="steam-percentage">Steam %</option></select><input type="number" id="apo-steamval-${id}" value="100" min="0" max="100" style="display:none;max-width:80px;flex:0 0 auto;"></div>
+      <div class="anova-row"><label>Timer min</label><input type="number" id="apo-timer-${id}" value="0" min="0"></div>
+      <div class="anova-btns"><button class="btn btn-primary" onclick="anovaStartOven('${id}')">Start</button><button class="btn btn-secondary" onclick="anovaStopOven('${id}')">Stop</button></div></div>`;
+  }).join('');
+  applyAnovaPrefill();
+}
+
+// Apply a recipe-driven prefill to the first matching device, once it's rendered
+function applyAnovaPrefill() {
+  if (!_anovaPrefill) return;
+  const p = _anovaPrefill;
+  const id = Object.keys(_anovaDevices).find(k => _anovaDevices[k].accessory === (p.accessory));
+  if (!id) return; // device not discovered yet — apply on next render
+  const set = (el, v) => { const n = document.getElementById(el + id); if (n != null && v != null) n.value = v; };
+  if (p.accessory === 'APO') {
+    const m = document.getElementById('apo-mode-' + id); if (m && p.mode) m.value = p.mode;
+    set('apo-temp-', p.tempF); set('apo-timer-', p.mins || 0);
+  } else {
+    set('apc-temp-', p.tempF); set('apc-timer-', p.mins || 0);
+  }
+  _anovaPrefill = null;
+}
+
+function sendAnova(obj) {
+  if (!_anovaWS || _anovaWS.readyState !== 1) { toast('Not connected to Anova'); return false; }
+  try { _anovaWS.send(JSON.stringify(obj)); _anovaRaw.unshift('→ ' + JSON.stringify(obj)); if (_anovaRaw.length > 80) _anovaRaw.length = 80; renderAnovaRaw(); return true; }
+  catch (e) { toast('Send failed'); return false; }
+}
+
+// --- Precision Cooker (sous vide) ---
+function anovaStartCooker(id) {
+  const d = _anovaDevices[id]; if (!d) return;
+  const f = parseFloat(document.getElementById('apc-temp-' + id).value);
+  const mins = parseInt(document.getElementById('apc-timer-' + id).value, 10) || 0;
+  if (!(f >= 32 && f <= 210)) { toast('Enter a temperature between 32–210°F'); return; }
+  if (!confirm(`Start ${d.name} at ${f}°F${mins ? ' for ' + mins + ' min' : ''}?`)) return;
+  if (sendAnova({ command: 'CMD_APC_START', requestId: anovaUuid(), payload: { cookerId: id, type: d.type, targetTemperature: f, unit: 'F', timer: mins * 60 } })) toast('Starting ' + d.name);
+}
+function anovaStopCooker(id) {
+  const d = _anovaDevices[id]; if (!d) return;
+  if (!confirm(`Stop ${d.name}?`)) return;
+  if (sendAnova({ command: 'CMD_APC_STOP', requestId: anovaUuid(), payload: { cookerId: id, type: d.type } })) toast('Stopping ' + d.name);
+}
+
+// --- Precision Oven ---
+function anovaStartOven(id) {
+  const d = _anovaDevices[id]; if (!d) return;
+  const mode = document.getElementById('apo-mode-' + id).value;
+  const f = parseFloat(document.getElementById('apo-temp-' + id).value);
+  const mins = parseInt(document.getElementById('apo-timer-' + id).value, 10) || 0;
+  const maxF = mode === 'wet' ? 212 : 482;
+  if (!(f >= 75 && f <= maxF)) { toast(`Enter ${mode === 'wet' ? '75–212' : '75–482'}°F`); return; }
+  // Steam / humidity
+  const steamMode = document.getElementById('apo-steam-' + id).value;
+  const steamVal = Math.max(0, Math.min(100, parseInt(document.getElementById('apo-steamval-' + id).value, 10) || 0));
+  let steam = null, steamLabel = '';
+  if (steamMode === 'relative-humidity') { steam = { mode: 'relative-humidity', relativeHumidity: { setpoint: steamVal } }; steamLabel = ` · ${steamVal}% humidity`; }
+  else if (steamMode === 'steam-percentage') { steam = { mode: 'steam-percentage', steamPercentage: { setpoint: steamVal } }; steamLabel = ` · ${steamVal}% steam`; }
+  if (!confirm(`Start ${d.name} — ${mode === 'wet' ? 'sous vide' : 'roast'} at ${f}°F${steamLabel}${mins ? ' for ' + mins + ' min' : ''}?`)) return;
+  const c = fToC(f);
+  const elems = mode === 'dry' ? { top: { on: false }, bottom: { on: false }, rear: { on: true } } : { top: { on: true }, bottom: { on: false }, rear: { on: true } };
+  let inner;
+  if (d.type === 'oven_v2') {
+    const doObj = { type: 'cook', fan: { speed: 100 }, heatingElements: elems, exhaustVent: { state: 'closed' },
+      temperatureBulbs: mode === 'dry' ? { mode: 'dry', dry: { setpoint: { celsius: c } } } : { mode: 'wet', wet: { setpoint: { celsius: c } } } };
+    if (steam) doObj.steamGenerators = steam;
+    if (mins) doObj.timer = { initial: mins * 60 };
+    inner = { stages: [{ id: anovaUuid(), do: doObj, exit: { conditions: { and: {} } }, title: '', description: '', rackPosition: 3 }],
+      cookId: anovaUuid(), cookerId: id, cookableId: '', title: '', type: 'oven_v2', originSource: 'api', cookableType: 'manual' };
+  } else {
+    const stage = { stepType: 'stage', id: anovaUuid(), title: '', description: '', type: 'cook', userActionRequired: false,
+      temperatureBulbs: mode === 'dry' ? { mode: 'dry', dry: { setpoint: { celsius: c, fahrenheit: f } } } : { mode: 'wet', wet: { setpoint: { celsius: c, fahrenheit: f } } },
+      heatingElements: elems, fan: { speed: 100 }, vent: { open: false }, rackPosition: 3, stageTransitionType: 'automatic' };
+    if (steam) stage.steamGenerators = steam;
+    if (mins) { stage.timerAdded = true; stage.timer = { initial: mins * 60 }; }
+    inner = { cookId: anovaUuid(), stages: [stage] };
+  }
+  if (sendAnova({ command: 'CMD_APO_START', requestId: anovaUuid(), payload: { id, payload: inner, type: 'CMD_APO_START' } })) toast('Starting ' + d.name);
+}
+function anovaStopOven(id) {
+  const d = _anovaDevices[id]; if (!d) return;
+  if (!confirm(`Stop ${d.name}?`)) return;
+  if (sendAnova({ command: 'CMD_APO_STOP', requestId: anovaUuid(), payload: { id, type: 'CMD_APO_STOP' } })) toast('Stopping ' + d.name);
+}
+
+function renderAnovaRaw() { const el = document.getElementById('anovaRawLog'); if (el) el.textContent = _anovaRaw.slice(0, 50).join('\n'); }
+function toggleAnovaRaw() { const el = document.getElementById('anovaRawLog'); el.style.display = el.style.display === 'none' ? 'block' : 'none'; renderAnovaRaw(); }
+function openAnovaModal() {
+  _anovaTarget = 'anovaDevices';
+  document.getElementById('anovaModal').classList.add('open');
+  if (anovaConfigured() && (!_anovaWS || _anovaWS.readyState > 1)) anovaConnect();
+  renderAnovaDevices(); renderAnovaRaw();
+}
+function closeAnovaModal() { document.getElementById('anovaModal').classList.remove('open'); }
+
+// Open controls pre-filled from a recipe (mobile recipe banner)
+function openAppliancePrefill(pref) { _anovaPrefill = pref; openAnovaModal(); }
+
+// Kitchen-display full appliance panel
+function openFridgeAppliances() {
+  _anovaTarget = 'fmAppDevices';
+  document.getElementById('fmAppPanel').classList.add('open');
+  if (anovaConfigured() && (!_anovaWS || _anovaWS.readyState > 1)) anovaConnect();
+  renderAnovaDevices();
+}
+function closeFridgeAppliances() {
+  document.getElementById('fmAppPanel').classList.remove('open');
+  _anovaTarget = 'anovaDevices';
+}
+
+// ===========================================================================
+// SONOS (beta) — official cloud Control API via the Worker
+// ===========================================================================
+let _sonosHouseholdId = null, _sonosGroups = [], _sonosGroupId = null, _sonosFavorites = [];
+function sonosTokens() { try { return JSON.parse(localStorage.getItem('sonos_tokens') || 'null'); } catch (e) { return null; } }
+function setSonosTokens(t) { try { localStorage.setItem('sonos_tokens', JSON.stringify(t)); } catch (e) {} }
+function setSonosStatus(s) { ['sonosStatus', 'sonosSettingsStatus'].forEach(id => { const e = document.getElementById(id); if (e) e.textContent = s; }); }
+function saveSonosClientId() { const v = document.getElementById('sonosClientId').value.trim(); if (v) localStorage.setItem('sonos_client_id', v); else localStorage.removeItem('sonos_client_id'); toast('Sonos Client ID saved'); }
+function loadSonosSettings() { const el = document.getElementById('sonosClientId'); if (el) el.value = getSonosClientId(); setSonosStatus(sonosTokens() ? 'Connected.' : 'Not connected.'); _sonosRenderTarget = 'sonosBody'; if (sonosTokens()) loadSonos(); else renderSceneSettings(); }
+
+function connectSonos() {
+  const cid = getSonosClientId();
+  if (!cid) { setSonosStatus('Add your Sonos Client ID first.'); toast('Add your Sonos Client ID first'); return; }
+  const state = 'sonos_' + anovaUuid();
+  try { sessionStorage.setItem('sonos_state', state); } catch (e) {}
+  location.href = 'https://api.sonos.com/login/v3/oauth?client_id=' + encodeURIComponent(cid) +
+    '&response_type=code&state=' + state + '&scope=playback-control-all&redirect_uri=' + encodeURIComponent(sonosRedirectUri());
+}
+
+async function handleSonosRedirect() {
+  const p = new URLSearchParams(location.search);
+  const code = p.get('code'); if (!code) return;
+  const state = p.get('state') || '';
+  if (!state.startsWith('sonos_')) return; // not ours (e.g. a Google Calendar redirect)
+  let saved = ''; try { saved = sessionStorage.getItem('sonos_state') || ''; } catch (e) {}
+  if (saved && saved !== state) { history.replaceState({}, '', sonosRedirectUri()); return; }
+  try {
+    const res = await fetch(getProxyUrl() + '/sonos/token', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ grant_type: 'authorization_code', code, redirect_uri: sonosRedirectUri() }) });
+    const t = await res.json();
+    if (t.access_token) { t.expires_at = Date.now() + (t.expires_in || 3600) * 1000; setSonosTokens(t); toast('Sonos connected'); }
+    else toast('Sonos connect failed');
+  } catch (e) { toast('Sonos connect error'); }
+  history.replaceState({}, '', sonosRedirectUri());
+}
+
+async function ensureSonosToken() {
+  const t = sonosTokens(); if (!t || !t.access_token) return null;
+  if (t.expires_at && Date.now() < t.expires_at - 60000) return t.access_token;
+  if (!t.refresh_token) return t.access_token;
+  try {
+    const res = await fetch(getProxyUrl() + '/sonos/token', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ grant_type: 'refresh_token', refresh_token: t.refresh_token }) });
+    const nt = await res.json();
+    if (nt.access_token) { nt.refresh_token = nt.refresh_token || t.refresh_token; nt.expires_at = Date.now() + (nt.expires_in || 3600) * 1000; setSonosTokens(nt); return nt.access_token; }
+  } catch (e) {}
+  return t.access_token;
+}
+
+async function sonosApi(method, path, body) {
+  const token = await ensureSonosToken();
+  if (!token) throw new Error('Not connected to Sonos');
+  const res = await fetch(getProxyUrl() + '/sonos/api', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token, method, path, body }) });
+  if (res.status === 401) throw new Error('Sonos session expired — reconnect in Settings.');
+  const txt = await res.text(); let data; try { data = JSON.parse(txt); } catch (e) { data = {}; }
+  return data;
+}
+
+let _sonosRenderTarget = 'sonosBody';
+async function loadSonos() {
+  setSonosStatus('Loading your Sonos…');
+  try {
+    const hh = await sonosApi('GET', '/households');
+    const households = hh.households || [];
+    if (!households.length) { setSonosStatus('No Sonos households found on this account.'); return; }
+    _sonosHouseholdId = households[0].id;
+    const g = await sonosApi('GET', '/households/' + _sonosHouseholdId + '/groups');
+    _sonosGroups = g.groups || [];
+    if ((!_sonosGroupId || !_sonosGroups.find(x => x.id === _sonosGroupId)) && _sonosGroups[0]) _sonosGroupId = _sonosGroups[0].id;
+    try { const f = await sonosApi('GET', '/households/' + _sonosHouseholdId + '/favorites'); _sonosFavorites = (f.items || []).slice(0, 30); } catch (e) { _sonosFavorites = []; }
+    setSonosStatus(_sonosGroups.length + ' room group(s) found.');
+    renderSonosControls();
+    renderSceneSettings();
+  } catch (e) { setSonosStatus(e.message || 'Could not load Sonos.'); }
+}
+
+// --- Music scenes (one-tap morning / evening / cooking routines) ---
+const SCENES = ['morning', 'evening', 'cooking'];
+const SCENE_LABEL = { morning: '☀️ Good morning', evening: '🌙 Evening', cooking: '🍳 Cooking' };
+function getScene(w) { try { return JSON.parse(localStorage.getItem('scene_' + w) || '{}'); } catch (e) { return {}; } }
+function saveScenesFromForm() {
+  SCENES.forEach(w => {
+    const r = document.getElementById('scene_' + w + '_room'), f = document.getElementById('scene_' + w + '_fav'), v = document.getElementById('scene_' + w + '_vol');
+    if (r && f && v) localStorage.setItem('scene_' + w, JSON.stringify({ groupId: r.value, favoriteId: f.value, volume: parseInt(v.value, 10) || 25 }));
+  });
+  toast('Music scenes saved');
+}
+function renderSceneSettings() {
+  const el = document.getElementById('sonosScenes'); if (!el) return;
+  if (!_sonosGroups.length) { el.innerHTML = '<p style="font-size:12px;color:var(--text-secondary);">Connect Sonos to set up scenes.</p>'; return; }
+  const roomOpts = g => _sonosGroups.map(x => `<option value="${x.id}" ${x.id === g ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
+  const favOpts = fid => '<option value="">— favorite —</option>' + _sonosFavorites.map(x => `<option value="${esc(x.id)}" ${x.id === fid ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
+  el.innerHTML = SCENES.map(w => { const c = getScene(w); return `<div style="margin-bottom:10px;"><div style="font-size:13px;font-weight:600;margin-bottom:4px;">${SCENE_LABEL[w]}</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;">
+      <select id="scene_${w}_room" onchange="saveScenesFromForm()" style="flex:1;min-width:110px;">${roomOpts(c.groupId)}</select>
+      <select id="scene_${w}_fav" onchange="saveScenesFromForm()" style="flex:1;min-width:110px;">${favOpts(c.favoriteId)}</select>
+      <input id="scene_${w}_vol" type="number" min="0" max="100" value="${c.volume || 25}" onchange="saveScenesFromForm()" style="width:62px;" title="Volume">
+    </div></div>`; }).join('');
+}
+async function runSonosScene(w) {
+  const c = getScene(w);
+  if (!c.groupId || !c.favoriteId) { toast('Set up the ' + w + ' scene in Settings → Sonos'); return; }
+  try {
+    await sonosApi('POST', '/groups/' + c.groupId + '/groupVolume', { volume: c.volume || 25 });
+    await sonosApi('POST', '/groups/' + c.groupId + '/favorites', { favoriteId: c.favoriteId, action: 'REPLACE', playOnCompletion: true });
+    toast(SCENE_LABEL[w] + ' — music on');
+  } catch (e) { toast(e.message); }
+  // Morning routine also reads the day's fact aloud
+  if (w === 'morning' && _fridgeFactText) setTimeout(() => speakFact(_fridgeFactText, 'Good morning!'), 1400);
+}
+
+function renderSonosControls(target) {
+  const el = document.getElementById(target || _sonosRenderTarget); if (!el) return;
+  if (!sonosTokens()) { el.innerHTML = '<p style="font-size:14px;color:var(--text-secondary);">Not connected. Tap "Connect Sonos" in Settings.</p>'; return; }
+  if (!_sonosGroups.length) { el.innerHTML = '<p style="font-size:14px;color:var(--text-secondary);">Loading rooms…</p>'; return; }
+  const opts = _sonosGroups.map(g => `<option value="${g.id}" ${g.id === _sonosGroupId ? 'selected' : ''}>${esc(g.name)}</option>`).join('');
+  let html = `<div class="anova-row"><label>Room</label><select onchange="_sonosGroupId=this.value" style="flex:1;">${opts}</select></div>
+    <div style="display:flex;gap:8px;align-items:center;margin:14px 0;">
+      <button class="btn btn-secondary" onclick="sonosCmd('skipToPreviousTrack')" style="font-size:18px;">⏮</button>
+      <button class="btn btn-primary" style="flex:1;font-size:16px;" onclick="sonosCmd('togglePlayPause')">⏯ Play / Pause</button>
+      <button class="btn btn-secondary" onclick="sonosCmd('skipToNextTrack')" style="font-size:18px;">⏭</button>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:6px;">
+      <button class="btn btn-secondary" style="flex:1;" onclick="sonosVol(-5)">🔉 Vol −</button>
+      <button class="btn btn-secondary" style="flex:1;" onclick="sonosVol(5)">🔊 Vol +</button>
+      <button class="btn btn-secondary" style="flex:1;" onclick="sonosMute()">🔇 Mute</button>
+    </div>`;
+  if (_sonosFavorites.length) {
+    html += '<h4 style="font-size:12px;text-transform:uppercase;color:var(--text-secondary);letter-spacing:.5px;margin:14px 0 8px;">Favorites</h4><div style="display:flex;flex-direction:column;gap:6px;">' +
+      _sonosFavorites.map(f => `<button class="btn btn-secondary btn-sm" style="text-align:left;justify-content:flex-start;" onclick="sonosFavorite('${esc(f.id).replace(/'/g,"\\'")}')">▶ ${esc(f.name)}</button>`).join('') + '</div>';
+  }
+  el.innerHTML = html;
+}
+
+async function sonosCmd(cmd) { if (!_sonosGroupId) return; try { await sonosApi('POST', '/groups/' + _sonosGroupId + '/playback/' + cmd, {}); } catch (e) { toast(e.message); } }
+async function sonosVol(d) { if (!_sonosGroupId) return; try { await sonosApi('POST', '/groups/' + _sonosGroupId + '/groupVolume/relative', { volumeDelta: d }); } catch (e) { toast(e.message); } }
+async function sonosMute() { if (!_sonosGroupId) return; try { await sonosApi('POST', '/groups/' + _sonosGroupId + '/groupVolume/mute', { muted: true }); toast('Muted'); } catch (e) { toast(e.message); } }
+async function sonosFavorite(fid) { if (!_sonosGroupId) return; try { await sonosApi('POST', '/groups/' + _sonosGroupId + '/favorites', { favoriteId: fid, action: 'REPLACE', playOnCompletion: true }); toast('Playing favorite'); } catch (e) { toast(e.message); } }
+
+function openSonosModal() {
+  _sonosRenderTarget = 'sonosBody';
+  document.getElementById('sonosModal').classList.add('open');
+  renderSonosControls('sonosBody');
+  if (sonosTokens()) loadSonos(); else setSonosStatus('Connect Sonos in Settings first.');
+}
+function closeSonosModal() { document.getElementById('sonosModal').classList.remove('open'); }
+
+// Kitchen-display Sonos panel
+function openFridgeSonos() {
+  _sonosRenderTarget = 'fmSonosBody';
+  document.getElementById('fmSonosPanel').classList.add('open');
+  renderSonosControls('fmSonosBody');
+  if (sonosTokens()) loadSonos(); else { const b = document.getElementById('fmSonosBody'); if (b) b.innerHTML = '<p style="font-size:16px;color:var(--text-secondary);">Connect Sonos in Settings first.</p>'; }
+}
+function closeFridgeSonos() { document.getElementById('fmSonosPanel').classList.remove('open'); _sonosRenderTarget = 'sonosBody'; }
+
+// Time-aware scene buttons + Sonos chip on the kitchen display
+function renderFridgeSonosRow() {
+  const el = document.getElementById('fmSonosRow'); if (!el) return;
+  if (!sonosTokens()) { el.innerHTML = ''; return; }
+  const h = new Date().getHours();
+  let scenes = '';
+  if (h < 12) scenes += `<button class="fm-app-chip" onclick="runSonosScene('morning')">☀️ Good morning</button>`;
+  else if (h >= 16) scenes += `<button class="fm-app-chip" onclick="runSonosScene('evening')">🌙 Evening</button>`;
+  el.innerHTML = scenes + `<button class="fm-app-chip" onclick="openFridgeSonos()">🎵 Music</button>`;
+}
+
+// ===========================================================================
+// INIT
+// ===========================================================================
+loadLocal();
+if(!data.children) data.children=[];
+if(!data.checkedItems) data.checkedItems={};
+if(!data.usageHistory) data.usageHistory=[];
+if(!data.doordash) data.doordash={ orders:[], monthlyBudget:150, monthlyTarget:4 };
+if(!data.consequences) data.consequences=[];
+if(!data.groceryExtras) data.groceryExtras=[];
+if(!data.blogs) data.blogs=[];
+if(!data.factHistory) data.factHistory=[];
+initFirebase();
+
+// Register service worker for PWA
+if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(e=>console.log('SW:',e));
+
+// Show which version this device is actually running (Settings → Sync card)
+const APP_VERSION = 'v62'; // keep in step with sw.js CACHE_NAME
+(function(){ const el = document.getElementById('appVersion'); if (el) el.textContent = 'App version: ' + APP_VERSION; })();
+
+if (IS_KITCHEN) {
+  // Standalone kitchen page (kitchen.html): only the display, no app shell.
+  // Clear the old in-app resume flag so "Full app" lands on the app, not the overlay.
+  try { localStorage.removeItem('mp_fridge_mode'); } catch (e) {}
+  if (familyCode) {
+    startListening();
+    openFridgeMode();
+    fetchWeather();
+  } else {
+    document.getElementById('kitchenSetup').style.display = 'flex';
+  }
+  if (anovaConfigured()) { try { anovaConnect(); } catch (e) {} }
+} else {
+  if(familyCode) {
+    startListening();
+    showApp();
+    setTimeout(backupIfNeeded, 12000); // after the first snapshot has landed
+  } else {
+    showSetup();
+  }
+
+  // Auto-connect to Anova on load if a token is set, so devices are ready everywhere
+  if (anovaConfigured()) { try { anovaConnect(); } catch (e) {} }
+
+  // Complete a Sonos OAuth redirect if we came back with ?code
+  try { handleGoogleRedirect(); } catch (e) {}
+  try { handleSonosRedirect(); } catch (e) {}
+
+  // Resume kitchen display mode after a reload (e.g. dedicated iPad)
+  if (localStorage.getItem('mp_fridge_mode') === '1' && familyCode) {
+    setTimeout(openFridgeMode, 500); // give weather/calendar a beat to load
+  }
+}
+
+// Reconnect handling: push local edits when the network comes back, and say so
+window.addEventListener('online', () => {
+  if (familyCode && firebaseReady) {
+    saveToFirebase();
+    toast('Back online — syncing');
+  }
+});
+window.addEventListener('offline', () => toast('Offline — changes will sync when you reconnect'));

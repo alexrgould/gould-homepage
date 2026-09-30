@@ -33,6 +33,13 @@ Built to run on **GitHub Pages** with no build step. Open `index.html` in a brow
 - **Mise en place checklist** — tap ingredients to check them off as you gather them (per cooking session, not synced)
 - **Multi-timers, music scene, wake lock** — concurrent named timers, one-tap Sonos cooking playlist, and the screen stays awake while cooking
 
+### Kitchen Display
+- **Its own page** — `kitchen.html` is just the display, for a wall or counter iPad. Open it, then Share → Add to Home Screen and it launches straight to the display
+- **Shows** the clock, weather, tonight's dinner with a "start by" time, today's calendar, grocery quick-add, the next few dinners, and a daily fact for the kids
+- **Stays current** — changes from other devices appear right away, calendar events refresh every 5 minutes, and the screen stays awake after the iPad wakes
+- **Fits both ways** — sideways fits on one screen; upright stacks and scrolls
+- **Cook Mode, Sonos and Anova** open from the display; a "Full app" button goes to the regular app
+
 ### Fridge Check (Claude AI)
 - **📸 button on the Recipes tab** — photo your fridge, Claude identifies what's usable and suggests 3-5 dinners, preferring recipes already in your book
 - **Actionable results** — book matches open directly; missing items add to the grocery list in one tap
@@ -120,16 +127,20 @@ Built to run on **GitHub Pages** with no build step. Open `index.html` in a brow
 
 ## Architecture
 
-### Single-File PWA
-The entire app is one `index.html` file (~3700 lines) containing all HTML, CSS, and JavaScript. No build tools, no frameworks, no dependencies beyond Firebase and Google APIs loaded from CDN.
+### Static PWA
+Two pages share one script and one stylesheet. No build tools, no frameworks, no dependencies beyond Firebase and Google APIs loaded from CDN.
 
 ### File Structure
 
 ```
-meal-planner/
-  index.html          # The entire app — HTML + CSS + JS
+gould-homepage/
+  index.html          # Main app markup
+  kitchen.html        # Standalone kitchen display (wall iPad)
+  app.js              # All app logic, shared by both pages
+  app.css             # All styles, shared by both pages
   sw.js               # Service worker (network-first caching)
   manifest.json       # PWA manifest for install-to-homescreen
+  kitchen-manifest.json # Home-screen manifest for the kitchen page
   claude-worker.js    # Cloudflare Worker source for Claude API proxy
   anova-proxy-worker.js # Cloudflare Worker: keeps the Anova token out of the browser
   rss-test.html       # Standalone RSS feed service diagnostic tool
