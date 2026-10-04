@@ -39,6 +39,7 @@ Built to run on **GitHub Pages** with no build step. Open `index.html` in a brow
 - **Stays current** — changes from other devices appear right away, calendar events refresh every 5 minutes, and the screen stays awake after the iPad wakes
 - **Fits both ways** — sideways fits on one screen; upright stacks and scrolls
 - **Cook Mode, Sonos and Anova** open from the display; a "Full app" button goes to the regular app
+- **Sonos shuffle** — favorites and music scenes start shuffled on a random song (on by default; toggle in the Music panel)
 
 ### Fridge Check (Claude AI)
 - **📸 button on the Recipes tab** — photo your fridge, Claude identifies what's usable and suggests 3-5 dinners, preferring recipes already in your book
