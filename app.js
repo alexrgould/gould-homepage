@@ -5623,7 +5623,7 @@ async function runSonosScene(w) {
   if (!c.groupId || !c.favoriteId) { toast('Set up the ' + w + ' scene in Settings → Sonos'); return; }
   try {
     await sonosApi('POST', '/groups/' + c.groupId + '/groupVolume', { volume: c.volume || 25 });
-    await sonosApi('POST', '/groups/' + c.groupId + '/favorites', { favoriteId: c.favoriteId, action: 'REPLACE', playOnCompletion: true });
+    await sonosPlayFavorite(c.groupId, c.favoriteId);
     toast(SCENE_LABEL[w] + ' — music on');
   } catch (e) { toast(e.message); }
   // Morning routine also reads the day's fact aloud
@@ -5645,6 +5645,7 @@ function renderSonosControls(target) {
       <button class="btn btn-secondary" style="flex:1;" onclick="sonosVol(-5)">🔉 Vol −</button>
       <button class="btn btn-secondary" style="flex:1;" onclick="sonosVol(5)">🔊 Vol +</button>
       <button class="btn btn-secondary" style="flex:1;" onclick="sonosMute()">🔇 Mute</button>
+      <button class="btn ${sonosShuffleOn() ? 'btn-primary' : 'btn-secondary'}" style="flex:1;" onclick="toggleSonosShuffle()">🔀 Shuffle ${sonosShuffleOn() ? 'on' : 'off'}</button>
     </div>`;
   if (_sonosFavorites.length) {
     html += '<h4 style="font-size:12px;text-transform:uppercase;color:var(--text-secondary);letter-spacing:.5px;margin:14px 0 8px;">Favorites</h4><div style="display:flex;flex-direction:column;gap:6px;">' +
@@ -5656,7 +5657,24 @@ function renderSonosControls(target) {
 async function sonosCmd(cmd) { if (!_sonosGroupId) return; try { await sonosApi('POST', '/groups/' + _sonosGroupId + '/playback/' + cmd, {}); } catch (e) { toast(e.message); } }
 async function sonosVol(d) { if (!_sonosGroupId) return; try { await sonosApi('POST', '/groups/' + _sonosGroupId + '/groupVolume/relative', { volumeDelta: d }); } catch (e) { toast(e.message); } }
 async function sonosMute() { if (!_sonosGroupId) return; try { await sonosApi('POST', '/groups/' + _sonosGroupId + '/groupVolume/mute', { muted: true }); toast('Muted'); } catch (e) { toast(e.message); } }
-async function sonosFavorite(fid) { if (!_sonosGroupId) return; try { await sonosApi('POST', '/groups/' + _sonosGroupId + '/favorites', { favoriteId: fid, action: 'REPLACE', playOnCompletion: true }); toast('Playing favorite'); } catch (e) { toast(e.message); } }
+async function sonosFavorite(fid) { if (!_sonosGroupId) return; try { await sonosPlayFavorite(_sonosGroupId, fid); toast('Playing favorite'); } catch (e) { toast(e.message); } }
+
+// Shuffle (on by default) so playlists don't start on the same song every time
+function sonosShuffleOn() { return localStorage.getItem('sonos_shuffle') !== '0'; }
+async function sonosPlayFavorite(groupId, fid) {
+  const shuffle = sonosShuffleOn();
+  await sonosApi('POST', '/groups/' + groupId + '/favorites', { favoriteId: fid, action: 'REPLACE', playOnCompletion: true, playModes: { shuffle } });
+  // Sonos can still open on the playlist's first track; hop once to a random one.
+  // Radio stations can't skip, so ignore failures.
+  if (shuffle) setTimeout(() => sonosApi('POST', '/groups/' + groupId + '/playback/skipToNextTrack', {}).catch(() => {}), 1500);
+}
+async function toggleSonosShuffle() {
+  const on = !sonosShuffleOn();
+  try { localStorage.setItem('sonos_shuffle', on ? '1' : '0'); } catch (e) {}
+  renderSonosControls();
+  if (_sonosGroupId) { try { await sonosApi('POST', '/groups/' + _sonosGroupId + '/playback/playMode', { playModes: { shuffle: on } }); } catch (e) {} }
+  toast('Shuffle ' + (on ? 'on' : 'off'));
+}
 
 function openSonosModal() {
   _sonosRenderTarget = 'sonosBody';
@@ -5704,7 +5722,7 @@ initFirebase();
 if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(e=>console.log('SW:',e));
 
 // Show which version this device is actually running (Settings → Sync card)
-const APP_VERSION = 'v62'; // keep in step with sw.js CACHE_NAME
+const APP_VERSION = 'v63'; // keep in step with sw.js CACHE_NAME
 (function(){ const el = document.getElementById('appVersion'); if (el) el.textContent = 'App version: ' + APP_VERSION; })();
 
 if (IS_KITCHEN) {

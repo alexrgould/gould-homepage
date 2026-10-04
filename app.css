@@ -444,9 +444,9 @@ nav button.active svg { animation: tabSpring .4s cubic-bezier(.34,1.56,.64,1); }
 #fmSonosPanel.open { display: block; }
 #fmSonosPanel .btn { font-size: 18px; padding: 16px; }
 @media (max-width: 820px) { #fmSonosPanel { padding: 24px; } }
-#fmAppPanel .fmap-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 22px; }
-#fmAppPanel .fmap-back { background: none; border: none; font-size: 18px; color: var(--text-secondary); font-weight: 600; }
-#fmAppPanel .fmap-title { font-family: var(--serif); font-size: 30px; font-weight: 600; }
+#fmAppPanel .fmap-top, #fmSonosPanel .fmap-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 22px; }
+#fmAppPanel .fmap-back, #fmSonosPanel .fmap-back { background: none; border: none; font-size: 18px; color: var(--text-secondary); font-weight: 600; }
+#fmAppPanel .fmap-title, #fmSonosPanel .fmap-title { font-family: var(--serif); font-size: 30px; font-weight: 600; }
 #fmAppPanel #fmAppDevices { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
 #fmAppPanel .anova-card { padding: 24px; }
 #fmAppPanel .anova-card .anova-name { font-size: 22px; }
