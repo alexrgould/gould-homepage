@@ -1,4 +1,4 @@
-const CACHE_NAME = 'meal-planner-v63';
+const CACHE_NAME = 'meal-planner-v64';
 const ASSETS = [
   './index.html',
   './manifest.json',
@@ -10,7 +10,8 @@ const ASSETS = [
 
 self.addEventListener('install', event => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then(cache => cache.addAll(ASSETS))
+    // cache: 'reload' skips the browser's HTTP cache so a new version never stores stale files
+    caches.open(CACHE_NAME).then(cache => cache.addAll(ASSETS.map(u => new Request(u, { cache: 'reload' }))))
   );
   self.skipWaiting();
 });
@@ -52,8 +53,13 @@ self.addEventListener('fetch', event => {
     return;
   }
 
+  // Our own files: revalidate with GitHub Pages every time (a cheap 304 when
+  // unchanged) instead of trusting its 10-minute HTTP cache, so updates show on next open
+  const req = url.origin === self.location.origin
+    ? new Request(event.request, { cache: 'no-cache' }) // keeps redirect handling for page loads
+    : event.request;
   event.respondWith(
-    fetch(event.request)
+    fetch(req)
       .then(response => {
         const clone = response.clone();
         caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));

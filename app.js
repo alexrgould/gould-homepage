@@ -5722,7 +5722,7 @@ initFirebase();
 if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(e=>console.log('SW:',e));
 
 // Show which version this device is actually running (Settings → Sync card)
-const APP_VERSION = 'v63'; // keep in step with sw.js CACHE_NAME
+const APP_VERSION = 'v64'; // keep in step with sw.js CACHE_NAME
 (function(){ const el = document.getElementById('appVersion'); if (el) el.textContent = 'App version: ' + APP_VERSION; })();
 
 if (IS_KITCHEN) {
