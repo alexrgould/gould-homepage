@@ -55,7 +55,7 @@ Built to run on **GitHub Pages** with no build step. Open `index.html` in a brow
 - **Per-recipe generation** — a "✨ Write steps with AI" button appears on any recipe without steps, in both the recipe detail view and Cook Mode itself
 - **Timer-aware output** — generated steps include explicit times and temps so Cook Mode's tap-to-start timers work automatically
 - **Synced like any edit** — steps land in the recipe's notes, so they sync to every device instantly; recipes are badged "✨ AI-written" until you edit them yourself
-- **Model configurable** — Settings → Claude AI → "Recipe Steps" (default Sonnet 5)
+- **Model configurable** — Settings → Claude AI → "Recipe Steps" (default Sonnet 5.5)
 
 ### Recipe Chat (Claude AI)
 - **Conversational recipe assistant** — ask questions about recipes, get cooking tips, request modifications
@@ -255,14 +255,13 @@ Browser can't call the Anthropic API directly (CORS). A tiny Cloudflare Worker (
 
 ## Claude AI Models
 
-The app supports four Claude models, configurable in Settings:
+The app supports three Claude models, configurable in Settings:
 
 | Model | Speed | Cost | Best For |
 |-------|-------|------|----------|
-| **Haiku 4.5** | Fastest | Cheapest | Quick tips, substitutions, daily use |
-| **Sonnet 4.5** | Fast | Moderate | Older Sonnet, kept for compatibility |
-| **Sonnet 5** | Fast | Moderate | Latest Sonnet (default for most features) |
-| **Opus 4.6** | Slower | Highest | Complex meal planning, nuanced parenting advice |
+| **Haiku 4.5** | Fastest | Cheapest | Quick substitutions, calendar summaries |
+| **Sonnet 5.5** | Fast | Moderate | Latest Sonnet (default for most features) |
+| **Opus 5.5** | Slower | Highest | Complex meal planning, nuanced parenting advice |
 
 ---
 
