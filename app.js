@@ -2205,21 +2205,25 @@ function getPhilosophy() { return localStorage.getItem('parenting_philosophy') |
 
 const CLAUDE_FEATURES = ['mealplan','recipechat','substitutions','calendar','tips','parentchat','steps','fridge'];
 const CLAUDE_MODEL_DEFAULTS = {
-  mealplan: 'claude-sonnet-5',
-  recipechat: 'claude-sonnet-5',
-  substitutions: 'claude-haiku-4-5-20251001',
-  calendar: 'claude-haiku-4-5-20251001',
-  tips: 'claude-sonnet-5',
-  parentchat: 'claude-sonnet-5',
-  steps: 'claude-sonnet-5',
-  fridge: 'claude-sonnet-5',
+  mealplan: 'claude-sonnet-5-5',
+  recipechat: 'claude-sonnet-5-5',
+  substitutions: 'claude-haiku-4-5',
+  calendar: 'claude-haiku-4-5',
+  tips: 'claude-sonnet-5-5',
+  parentchat: 'claude-sonnet-5-5',
+  steps: 'claude-sonnet-5-5',
+  fridge: 'claude-sonnet-5-5',
 };
+// How hard the model thinks before answering. Bigger jobs get more; chat stays quick.
+const CLAUDE_EFFORT = { mealplan: 'medium', steps: 'medium', fridge: 'medium' };
 
 function getModelForFeature(feature) {
   let m = localStorage.getItem('claude_model_' + feature);
-  // Migrate previously saved Sonnet 4.6 choices to Sonnet 5
-  if (m === 'claude-sonnet-4-6') { m = 'claude-sonnet-5'; localStorage.setItem('claude_model_' + feature, m); }
-  return m || CLAUDE_MODEL_DEFAULTS[feature] || 'claude-haiku-4-5-20251001';
+  // Move saved choices from older models onto the current ones
+  const migrated = !m ? m : /^claude-sonnet-/.test(m) ? 'claude-sonnet-5-5'
+    : /^claude-opus-/.test(m) ? 'claude-opus-5-5' : /^claude-haiku-/.test(m) ? 'claude-haiku-4-5' : m;
+  if (migrated !== m) { m = migrated; localStorage.setItem('claude_model_' + feature, m); }
+  return m || CLAUDE_MODEL_DEFAULTS[feature] || 'claude-haiku-4-5';
 }
 
 function normalizeProxyUrl(url) {
@@ -2327,8 +2331,12 @@ async function callClaude(userPrompt, opts = {}) {
 
   const systemPrompt = opts.system || '';
   // Model resolution: explicit opts.model > per-feature setting > Haiku default
-  const model = opts.model || (opts.feature ? getModelForFeature(opts.feature) : 'claude-haiku-4-5-20251001');
-  const maxTokens = opts.maxTokens || 1024;
+  const model = opts.model || (opts.feature ? getModelForFeature(opts.feature) : 'claude-haiku-4-5');
+  // Sonnet 5.5 / Opus 5.5 think before answering, and thinking counts against
+  // max_tokens — give them headroom so the answer isn't cut off, and keep effort
+  // modest so replies stay fast (Opus 5.5 can't turn thinking off; low is the lever)
+  const thinks = /^claude-(sonnet|opus)-5/.test(model);
+  const maxTokens = thinks ? Math.max(opts.maxTokens || 1024, 8000) : (opts.maxTokens || 1024);
 
   const body = {
     model,
@@ -2336,6 +2344,7 @@ async function callClaude(userPrompt, opts = {}) {
     messages: opts.messages || [{ role: 'user', content: userPrompt }],
   };
   if (systemPrompt) body.system = systemPrompt;
+  if (thinks) body.output_config = { effort: CLAUDE_EFFORT[opts.feature] || 'low' };
 
   const headers = {
     'Content-Type': 'application/json',
@@ -2358,6 +2367,7 @@ async function callClaude(userPrompt, opts = {}) {
     throw new Error('Claude API error: ' + resp.status + ' ' + errText.substring(0, 100));
   }
   const result = await resp.json();
+  if (result.stop_reason === 'refusal') throw new Error('Claude declined this one. Try rewording it, or pick a different model in Settings.');
   // Newer models (Sonnet 5+) may lead with a "thinking" block — take the first TEXT block
   if (result.content) {
     const textBlock = result.content.find(c => c.type === 'text' && typeof c.text === 'string');
@@ -5722,7 +5732,7 @@ initFirebase();
 if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(e=>console.log('SW:',e));
 
 // Show which version this device is actually running (Settings → Sync card)
-const APP_VERSION = 'v64'; // keep in step with sw.js CACHE_NAME
+const APP_VERSION = 'v65'; // keep in step with sw.js CACHE_NAME
 (function(){ const el = document.getElementById('appVersion'); if (el) el.textContent = 'App version: ' + APP_VERSION; })();
 
 if (IS_KITCHEN) {
