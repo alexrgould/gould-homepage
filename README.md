@@ -259,7 +259,7 @@ The app supports three Claude models, configurable in Settings:
 
 | Model | Speed | Cost | Best For |
 |-------|-------|------|----------|
-| **Haiku 4.5** | Fastest | Cheapest | Quick substitutions, calendar summaries |
+| **Haiku 5.5** | Fastest | Cheapest | Quick substitutions, calendar summaries, kids' facts |
 | **Sonnet 5.5** | Fast | Moderate | Latest Sonnet (default for most features) |
 | **Opus 5.5** | Slower | Highest | Complex meal planning, nuanced parenting advice |
 

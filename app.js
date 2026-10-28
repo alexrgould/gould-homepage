@@ -2207,8 +2207,8 @@ const CLAUDE_FEATURES = ['mealplan','recipechat','substitutions','calendar','tip
 const CLAUDE_MODEL_DEFAULTS = {
   mealplan: 'claude-sonnet-5-5',
   recipechat: 'claude-sonnet-5-5',
-  substitutions: 'claude-haiku-4-5',
-  calendar: 'claude-haiku-4-5',
+  substitutions: 'claude-haiku-5-5',
+  calendar: 'claude-haiku-5-5',
   tips: 'claude-sonnet-5-5',
   parentchat: 'claude-sonnet-5-5',
   steps: 'claude-sonnet-5-5',
@@ -2221,9 +2221,9 @@ function getModelForFeature(feature) {
   let m = localStorage.getItem('claude_model_' + feature);
   // Move saved choices from older models onto the current ones
   const migrated = !m ? m : /^claude-sonnet-/.test(m) ? 'claude-sonnet-5-5'
-    : /^claude-opus-/.test(m) ? 'claude-opus-5-5' : /^claude-haiku-/.test(m) ? 'claude-haiku-4-5' : m;
+    : /^claude-opus-/.test(m) ? 'claude-opus-5-5' : /^claude-haiku-/.test(m) ? 'claude-haiku-5-5' : m;
   if (migrated !== m) { m = migrated; localStorage.setItem('claude_model_' + feature, m); }
-  return m || CLAUDE_MODEL_DEFAULTS[feature] || 'claude-haiku-4-5';
+  return m || CLAUDE_MODEL_DEFAULTS[feature] || 'claude-haiku-5-5';
 }
 
 function normalizeProxyUrl(url) {
@@ -2331,11 +2331,11 @@ async function callClaude(userPrompt, opts = {}) {
 
   const systemPrompt = opts.system || '';
   // Model resolution: explicit opts.model > per-feature setting > Haiku default
-  const model = opts.model || (opts.feature ? getModelForFeature(opts.feature) : 'claude-haiku-4-5');
-  // Sonnet 5.5 / Opus 5.5 think before answering, and thinking counts against
+  const model = opts.model || (opts.feature ? getModelForFeature(opts.feature) : 'claude-haiku-5-5');
+  // Haiku / Sonnet / Opus 5.x think before answering, and thinking counts against
   // max_tokens — give them headroom so the answer isn't cut off, and keep effort
-  // modest so replies stay fast (Opus 5.5 can't turn thinking off; low is the lever)
-  const thinks = /^claude-(sonnet|opus)-5/.test(model);
+  // modest so replies stay fast (effort, not turning thinking off, is the lever)
+  const thinks = /^claude-(haiku|sonnet|opus)-5/.test(model);
   const maxTokens = thinks ? Math.max(opts.maxTokens || 1024, 8000) : (opts.maxTokens || 1024);
 
   const body = {
@@ -5732,7 +5732,7 @@ initFirebase();
 if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(e=>console.log('SW:',e));
 
 // Show which version this device is actually running (Settings → Sync card)
-const APP_VERSION = 'v65'; // keep in step with sw.js CACHE_NAME
+const APP_VERSION = 'v66'; // keep in step with sw.js CACHE_NAME
 (function(){ const el = document.getElementById('appVersion'); if (el) el.textContent = 'App version: ' + APP_VERSION; })();
 
 if (IS_KITCHEN) {
